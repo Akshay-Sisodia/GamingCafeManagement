@@ -25,6 +25,10 @@ builder.Services.PostConfigure<AgentOptions>(options =>
     {
         options.EnrollToken = enrollToken;
     }
+    if (key.GetValue("LauncherPath") is string launcherPath && !string.IsNullOrWhiteSpace(launcherPath))
+    {
+        options.LauncherPath = launcherPath;
+    }
 });
 
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<AgentOptions>>().Value);

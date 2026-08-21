@@ -52,6 +52,11 @@
                            Type="string" />
             <RegistryValue Root="HKLM"
                            Key="SOFTWARE\GamingCafe\Agent"
+                           Name="LauncherPath"
+                           Value="[ProgramFiles64Folder]GamingCafe\Launcher\GamingLauncher.exe"
+                           Type="string" />
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\GamingCafe\Agent"
                            Name="ServerBaseUrl"
                            Value="[SERVERURL]"
                            Type="string" />
