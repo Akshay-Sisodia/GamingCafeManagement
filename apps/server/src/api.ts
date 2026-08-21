@@ -5,6 +5,7 @@ import cors from "@fastify/cors";
 import { config } from "./config.js";
 import { db } from "./db/index.js";
 import { registerErrorHandler } from "./lib/problem.js";
+import { isAllowedOrigin } from "./lib/cors.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
 import { registerPcRoutes } from "./modules/pcs/routes.js";
 import { registerCommandRoutes } from "./modules/commands/routes.js";
@@ -26,17 +27,7 @@ export function buildServer(): FastifyInstance {
 
   void app.register(cors, {
     origin: (origin, cb) => {
-      const allowed = new Set([
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-        ...config.CORS_ORIGINS,
-      ]);
-      // Any Vercel preview/production domain for this project.
-      if (origin && /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) {
-        allowed.add(origin);
-      }
-      if (!origin || allowed.has(origin)) {
+      if (isAllowedOrigin(origin)) {
         cb(null, true);
         return;
       }

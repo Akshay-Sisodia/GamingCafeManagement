@@ -10,6 +10,7 @@ import {
   type UserClaims,
 } from "../../auth/guards.js";
 import { problem } from "../../lib/problem.js";
+import { corsHeadersFor } from "../../lib/cors.js";
 import { getRedis } from "../../lib/redis.js";
 import {
   allocateEntry,
@@ -49,11 +50,14 @@ async function streamEvents(
   void req.log;
   reply.hijack();
   const res = reply.raw;
+  // @fastify/cors headers are lost on hijacked replies — inject them manually
+  // or browsers block the EventSource connection.
   res.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache, no-transform",
     connection: "keep-alive",
     "x-accel-buffering": "no",
+    ...corsHeadersFor(req.headers.origin),
   });
   res.write("retry: 3000\n\n");
 
