@@ -179,6 +179,21 @@ public sealed class AgentWorker : BackgroundService
 
     private bool IsPaired() => _deviceToken is not null && _pcId is not null;
 
+    /// <summary>
+    /// Server rejected our credentials (PC record deleted server-side, DB
+    /// reset, token rotation). Drop the stored identity so the next SSE
+    /// attempt re-enrolls/pairs from scratch.
+    /// </summary>
+    private void ClearIdentity()
+    {
+        if (!IsPaired()) return;
+        _logger.LogWarning("clearing stored identity after auth rejection");
+        _db!.SetMeta("device_token_protected", "");
+        _db.SetMeta("pc_id", "");
+        _deviceToken = null;
+        _pcId = null;
+    }
+
     private bool IsOnline() => _sse?.IsConnected == true;
 
     private async Task PairIfNeededAsync(CancellationToken ct)
@@ -280,6 +295,7 @@ public sealed class AgentWorker : BackgroundService
             log: msg => _logger.LogInformation("sse: {Msg}", msg));
         _sse.ConnectionChanged += connected =>
             _logger.LogInformation("SSE {State}", connected ? "connected" : "disconnected");
+        _sse.AuthRejected += ClearIdentity;
         _sse.Start();
     }
 

@@ -23,6 +23,8 @@ public sealed class SseClient : IAsyncDisposable
 
     public bool IsConnected { get; private set; }
     public event Action<bool>? ConnectionChanged;
+    /// <summary>Invoked when the server rejects our credentials (401) — caller should clear stored identity.</summary>
+    public event Action? AuthRejected;
 
     public SseClient(Func<CancellationToken, Task<HttpRequestMessage>> requestFactory,
         Action<SseEvent> onEvent, Action<string>? log = null)
@@ -108,6 +110,16 @@ public sealed class SseClient : IAsyncDisposable
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 break;
+            }
+            catch (HttpRequestException hre) when (hre.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                // Server rejected our credentials — stored identity is stale
+                // (e.g. PC record deleted). Caller clears it; next loop re-enrolls.
+                SetConnected(false);
+                AuthRejected?.Invoke();
+                _log("SSE rejected: credentials invalid (401)");
+                await Task.Delay(backoffMs + Random.Shared.Next(0, 500), ct);
+                backoffMs = Math.Min(backoffMs * 2, 30_000);
             }
             catch (Exception ex)
             {
