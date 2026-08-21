@@ -159,9 +159,15 @@ public sealed class AgentWorker : BackgroundService
     {
         if (IsPaired()) return;
         var code = _db!.GetMeta("pairing_code");
-        if (code is null)
+        if (string.IsNullOrEmpty(code))
         {
-            _logger.LogWarning("not paired and no pairing_code in meta; waiting for provisioning");
+            // Convenience for first-time setup on a real machine:
+            //   set PAIRING_CODE env var (from admin app) instead of editing SQLite.
+            code = Environment.GetEnvironmentVariable("PAIRING_CODE");
+        }
+        if (string.IsNullOrEmpty(code))
+        {
+            _logger.LogWarning("not paired and no pairing code available; waiting for provisioning");
             return;
         }
 
