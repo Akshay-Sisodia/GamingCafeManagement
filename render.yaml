@@ -1,14 +1,10 @@
-# Render Blueprint — deploys the full cloud tier:
-#   api (web service) + worker (background worker) + managed Postgres + Redis.
+# Render Blueprint — deploys gcm-api (web service) + gcm-worker (background worker).
+# Postgres and Redis are HOSTED externally (Neon / Upstash / Redis Cloud etc.) —
+# paste their connection strings when Render prompts at deploy time.
+#
 # Deploy: Render Dashboard → New → Blueprint → point at this repo.
 #
 # Docs: https://render.com/docs/blueprint-spec
-
-databases:
-  - name: gcm-postgres
-    databaseName: gamingcafe
-    plan: free
-    postgresMajorVersion: "16"
 
 services:
   # ---- API (REST + SSE) -------------------------------------------------------
@@ -21,16 +17,11 @@ services:
     preDeployCommand: pnpm --filter server db:push
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: gcm-postgres
-          property: connectionString
+        sync: false # e.g. postgres://…@ep-xxx.neon.tech/gamingcafe?sslmode=require
       - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: gcm-redis
-          property: connectionString
+        sync: false # e.g. redis://…  or  rediss://… (TLS auto-detected)
       - key: JWT_SECRET
-        sync: false # set the SAME strong secret on gcm-api and gcm-worker when prompted
+        sync: false # set the SAME strong secret on gcm-api and gcm-worker
       - key: NODE_ENV
         value: production
       - key: LOG_LEVEL
@@ -45,23 +36,12 @@ services:
     autoDeploy: true
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: gcm-postgres
-          property: connectionString
+        sync: false # same value as gcm-api
       - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: gcm-redis
-          property: connectionString
+        sync: false # same value as gcm-api
       - key: JWT_SECRET
-        sync: false # set the same value as gcm-api so tokens validate across services
+        sync: false # same value as gcm-api
       - key: NODE_ENV
         value: production
       - key: LOG_LEVEL
         value: info
-
-  # ---- Redis (BullMQ queues + SSE pub/sub fan-out) ------------------------------
-  - type: keyvalue
-    name: gcm-redis
-    plan: free
-    maxmemoryPolicy: noeviction # BullMQ requires no eviction
