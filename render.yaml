@@ -18,9 +18,8 @@ services:
     plan: free
     healthCheckPath: /healthz
     autoDeploy: true
-    # Free tier has no preDeployCommand support — sync schema on boot instead
-    # (--force skips interactive prompts; push is idempotent).
-    dockerCommand: sh -c "pnpm --filter server db:push --force && pnpm --filter server start"
+    # Schema sync + startup handled by the image entrypoint
+    # (free tier has no preDeployCommand support).
     envVars:
       - key: SINGLE_PROCESS
         value: "true" # api + workers in one process (free-tier friendly)

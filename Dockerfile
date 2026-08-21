@@ -26,6 +26,10 @@ RUN pnpm --filter @gaming-cafe/shared typecheck \
 # ---- runtime -------------------------------------------------------------------
 FROM base AS runtime
 ENV NODE_ENV=production
+# Pre-activate pnpm so the first runtime call doesn't need to download it
+RUN corepack prepare pnpm@11.8.0 --activate
+COPY infra/render-entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 COPY --from=build /app /app
 EXPOSE 3000
-CMD ["pnpm", "--filter", "server", "start"]
+CMD ["/app/entrypoint.sh"]
