@@ -13,6 +13,8 @@ const envSchema = z.object({
   // Run BullMQ workers inside the api process (single-service platforms like
   // Koyeb's free tier). Keep false in multi-service deployments.
   SINGLE_PROCESS: z.coerce.boolean().default(false),
+  // Extra allowed CORS origins, comma-separated (e.g. your Vercel domains).
+  CORS_ORIGINS: z.string().default(""),
 });
 
 const parsed = envSchema.parse(process.env);
@@ -24,6 +26,9 @@ export const config = {
   PORT: parsed.PORT,
   LOG_LEVEL: parsed.LOG_LEVEL,
   SINGLE_PROCESS: parsed.SINGLE_PROCESS,
+  CORS_ORIGINS: parsed.CORS_ORIGINS.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
 } as const;
 
 export type Config = typeof config;

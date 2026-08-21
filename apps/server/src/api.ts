@@ -25,11 +25,23 @@ export function buildServer(): FastifyInstance {
   registerErrorHandler(app);
 
   void app.register(cors, {
-    origin: [
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://localhost:5175",
-    ],
+    origin: (origin, cb) => {
+      const allowed = new Set([
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        ...config.CORS_ORIGINS,
+      ]);
+      // Any Vercel preview/production domain for this project.
+      if (origin && /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) {
+        allowed.add(origin);
+      }
+      if (!origin || allowed.has(origin)) {
+        cb(null, true);
+        return;
+      }
+      cb(new Error(`Origin ${origin} not allowed by CORS`), false);
+    },
   });
 
   app.get("/healthz", async () => ({ ok: true }));
