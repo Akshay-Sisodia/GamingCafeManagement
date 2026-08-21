@@ -240,6 +240,26 @@ export const deviceCredentials = pgTable("device_credentials", {
   rotatedAt: ts("rotated_at"),
 });
 
+/**
+ * Cafe-level enrollment tokens (docs: zero-touch agent rollout).
+ * A single token installs N PCs; each agent self-registers a PC row
+ * named after its hostname.
+ */
+export const cafeEnrollmentTokens = pgTable(
+  "cafe_enrollment_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    cafeId: uuid("cafe_id")
+      .notNull()
+      .references(() => cafes.id),
+    label: text("label").notNull().default("rollout"),
+    tokenHash: text("token_hash").notNull(),
+    active: boolean("active").notNull().default(true),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("cafe_enrollment_tokens_hash_uq").on(t.tokenHash)],
+);
+
 export const pairingCodes = pgTable(
   "pairing_codes",
   {

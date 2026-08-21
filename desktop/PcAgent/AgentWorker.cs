@@ -63,7 +63,24 @@ public sealed class AgentWorker : BackgroundService
         _processes = new ProcessController(msg => _logger.LogInformation("process: {Msg}", msg));
         _health = new HealthReporter();
 
-        _deviceToken = _db.GetMeta("device_token");
+        // Token is stored DPAPI-protected (see PairIfNeededAsync) — unprotect on boot.
+        var storedProtected = _db.GetMeta("device_token_protected");
+        if (storedProtected is not null)
+        {
+            try
+            {
+                _deviceToken = Unprotect(storedProtected);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "stored device token unreadable — re-pairing required");
+                _db.SetMeta("device_token_protected", "");
+                _db.SetMeta("pc_id", "");
+            }
+        }
+        _pcId = _db.GetMeta("pc_id");
+        if (string.IsNullOrEmpty(_pcId)) _pcId = null;
+        if (string.IsNullOrEmpty(_deviceToken)) _deviceToken = null;
         _pcId = _db.GetMeta("pc_id");
         _api = new AgentApiClient(_options.ServerBaseUrl);
 
@@ -167,6 +184,16 @@ public sealed class AgentWorker : BackgroundService
     private async Task PairIfNeededAsync(CancellationToken ct)
     {
         if (IsPaired()) return;
+
+        // Zero-touch rollout: enrollment token registers this machine
+        // automatically (creates its PC record from the hostname).
+        var enrollToken = _options.EnrollToken ?? Environment.GetEnvironmentVariable("ENROLL_TOKEN");
+        if (!string.IsNullOrEmpty(enrollToken))
+        {
+            await EnrollAsync(enrollToken, ct);
+            return;
+        }
+
         var code = _db!.GetMeta("pairing_code");
         if (string.IsNullOrEmpty(code))
         {
@@ -183,18 +210,36 @@ public sealed class AgentWorker : BackgroundService
         {
             var fingerprint = ComputeFingerprint();
             var result = await _api!.PairAsync(code, fingerprint, "1.0.0", ct);
-            _deviceToken = result.GetProperty("device_token").GetString();
-            _pcId = result.GetProperty("pc_id").GetString();
-            _db.SetMeta("device_token_protected", Protect(_deviceToken!));
-            _db.SetMeta("pc_id", _pcId!);
-            _db.SetMeta("pairing_code", ""); // consumed
-            _deviceToken = Unprotect(_db.GetMeta("device_token_protected")!);
+            StoreIdentity(result);
             _logger.LogInformation("paired as {PcId}", _pcId);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "pairing failed");
         }
+    }
+
+    private async Task EnrollAsync(string enrollToken, CancellationToken ct)
+    {
+        try
+        {
+            var result = await _api!.EnrollAsync(
+                enrollToken, Environment.MachineName, ComputeFingerprint(), "1.0.0", ct);
+            StoreIdentity(result);
+            _logger.LogInformation("enrolled as {PcId}", _pcId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "enrollment failed");
+        }
+    }
+
+    private void StoreIdentity(System.Text.Json.JsonElement result)
+    {
+        _deviceToken = result.GetProperty("device_token").GetString();
+        _pcId = result.GetProperty("pc_id").GetString();
+        _db!.SetMeta("device_token_protected", Protect(_deviceToken!));
+        _db.SetMeta("pc_id", _pcId!);
     }
 
     internal static string ComputeFingerprint()

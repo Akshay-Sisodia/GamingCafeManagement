@@ -53,6 +53,17 @@ public sealed class AgentApiClient : IDisposable
         return await ReadJsonAsync(resp, ct);
     }
 
+    /// <summary>Zero-touch enrollment: server creates/updates this machine's PC row.</summary>
+    public async Task<JsonElement> EnrollAsync(string enrollToken, string hostname, string fingerprint, string agentVersion, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "v1/auth/devices/enroll")
+        {
+            Content = JsonBody(new { enroll_token = enrollToken, hostname, hardware_fingerprint = fingerprint, agent_version = agentVersion }),
+        };
+        using var resp = await _http.SendAsync(req, ct);
+        return await ReadJsonAsync(resp, ct);
+    }
+
     public async Task<JsonElement> BootstrapAsync(string token, string pcId, CancellationToken ct)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, "v1/agent/bootstrap");

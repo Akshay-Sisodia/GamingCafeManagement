@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { hash, verify } from "@node-rs/argon2";
 import {
   loginSchema,
@@ -7,8 +7,10 @@ import {
 } from "@gaming-cafe/shared";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
+import { randomBytes } from "node:crypto";
 import { db } from "../../db/index.js";
 import {
+  cafeEnrollmentTokens,
   deviceCredentials,
   pairingCodes,
   pcConfigurations,
@@ -182,5 +184,133 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.get("/me", { preHandler: requireUser() }, async (req) => {
     const user = req.user!;
     return { user };
+  });
+
+  // ---- Zero-touch enrollment (docs: rollout without scripts) ----------------
+  // Owner generates a cafe-level token; every agent installed with it
+  // self-registers a PC row named after its hostname.
+
+  app.post(
+    "/auth/enroll-tokens",
+    { preHandler: requireUser(["owner", "manager"]) },
+    async (req) => {
+      const user = req.user!;
+      const input = parseBody(
+        z.object({ label: z.string().max(60).optional() }),
+        req.body ?? {},
+      );
+      const plaintext = randomBytes(24).toString("base64url");
+      await db.insert(cafeEnrollmentTokens).values({
+        cafeId: user.cafe_id,
+        label: input.label ?? "rollout",
+        tokenHash: sha256Hex(plaintext),
+      });
+      await writeAudit(db, {
+        cafeId: user.cafe_id,
+        actorType: "user",
+        actorId: user.sub,
+        actorRole: user.role,
+        action: "ENROLL_TOKEN_CREATED",
+        source: "online",
+      });
+      // Plaintext is shown exactly once — only its hash is stored.
+      return { token: plaintext };
+    },
+  );
+
+  app.post("/auth/devices/enroll", async (req) => {
+    const input = parseBody(
+      z.object({
+        enroll_token: z.string().min(16),
+        hostname: z.string().min(1).max(40),
+        hardware_fingerprint: z.string().min(8).max(128),
+        agent_version: z.string(),
+      }),
+      req.body,
+    );
+
+    const tokenRows = await db
+      .select()
+      .from(cafeEnrollmentTokens)
+      .where(
+        and(
+          eq(cafeEnrollmentTokens.tokenHash, sha256Hex(input.enroll_token)),
+          eq(cafeEnrollmentTokens.active, true),
+        ),
+      )
+      .limit(1);
+    const token = tokenRows[0];
+    if (!token) throw problem(401, "Unauthorized", "INVALID_ENROLL_TOKEN");
+    const cafeId = token.cafeId;
+
+    // Re-enrollment of a known machine keeps the same PC row.
+    const known = await db
+      .select({ id: pcs.id })
+      .from(pcs)
+      .where(and(eq(pcs.cafeId, cafeId), eq(pcs.hardwareFingerprint, input.hardware_fingerprint)))
+      .limit(1);
+
+    let pcId: string;
+    let name = input.hostname.trim();
+
+    if (known[0]) {
+      pcId = known[0].id;
+      await db.update(pcs).set({ name, agentVersion: input.agent_version }).where(eq(pcs.id, pcId));
+    } else {
+      // Fresh machine — pick a unique name (hostname, hostname-2, …).
+      const taken = await db
+        .select({ name: pcs.name })
+        .from(pcs)
+        .where(eq(pcs.cafeId, cafeId));
+      const names = new Set(taken.map((t) => t.name.toLowerCase()));
+      if (names.has(name.toLowerCase())) {
+        for (let i = 2; ; i++) {
+          if (!names.has(`${name}-${i}`.toLowerCase())) {
+            name = `${name}-${i}`;
+            break;
+          }
+        }
+      }
+      const insertedPc = await db
+        .insert(pcs)
+        .values({
+          cafeId,
+          name,
+          hardwareFingerprint: input.hardware_fingerprint,
+          agentVersion: input.agent_version,
+          status: "online",
+        })
+        .returning();
+      pcId = insertedPc[0]!.id;
+      await db.insert(pcConfigurations).values({ pcId, version: 1, config: {} });
+    }
+
+    // Rotate credentials (revoke old, issue fresh).
+    await db
+      .update(deviceCredentials)
+      .set({ revokedAt: new Date() })
+      .where(eq(deviceCredentials.pcId, pcId));
+    const deviceToken = generateDeviceToken();
+    await db.insert(deviceCredentials).values({
+      pcId,
+      tokenHash: sha256Hex(deviceToken),
+    });
+
+    await writeAudit(db, {
+      cafeId,
+      actorType: "pc",
+      actorId: pcId,
+      action: "DEVICE_ENROLLED",
+      source: "online",
+      pcId,
+      metadata: { hostname: input.hostname, agent_version: input.agent_version },
+    });
+
+    return {
+      pc_id: pcId,
+      device_token: deviceToken,
+      server_time_ms: Date.now(),
+      config_version: 0,
+    } satisfies PairDeviceResponse;
   });
 }

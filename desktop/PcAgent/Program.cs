@@ -21,6 +21,10 @@ builder.Services.PostConfigure<AgentOptions>(options =>
     {
         options.PairingCode = pairingCode;
     }
+    if (key.GetValue("EnrollToken") is string enrollToken && !string.IsNullOrWhiteSpace(enrollToken))
+    {
+        options.EnrollToken = enrollToken;
+    }
 });
 
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<AgentOptions>>().Value);

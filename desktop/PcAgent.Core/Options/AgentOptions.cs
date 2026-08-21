@@ -17,4 +17,7 @@ public sealed class AgentOptions
 
     /// <summary>Optional pairing code provisioned per machine (registry/installer).</summary>
     public string? PairingCode { get; set; }
+
+    /// <summary>Cafe-wide enrollment token — enables zero-touch MSI rollout.</summary>
+    public string? EnrollToken { get; set; }
 }

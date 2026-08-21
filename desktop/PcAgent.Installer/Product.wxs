@@ -14,6 +14,11 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
+    <!-- Pass at install time:
+         msiexec /i GamingCafeAgent.msi ENROLLTOKEN="<token>" SERVERURL="https://gcm-api.onrender.com" -->
+    <Property Id="ENROLLTOKEN" Secure="yes" />
+    <Property Id="SERVERURL" Secure="yes" />
+
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="ROOTDIR" Name="GamingCafe">
         <Directory Id="AGENTDIR" Name="Agent">
@@ -39,6 +44,17 @@
                                     Protocol="tcp"
                                     Scope="localSubnet"
                                     Profile="private" />
+            <!-- Zero-touch rollout config: agent reads these on every boot. -->
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\GamingCafe\Agent"
+                           Name="EnrollToken"
+                           Value="[ENROLLTOKEN]"
+                           Type="string" />
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\GamingCafe\Agent"
+                           Name="ServerBaseUrl"
+                           Value="[SERVERURL]"
+                           Type="string" />
           </Component>
         </Directory>
 
