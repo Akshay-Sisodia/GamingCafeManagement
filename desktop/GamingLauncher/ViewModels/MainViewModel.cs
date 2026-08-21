@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Threading;
 using GamingLauncher.Ipc;
@@ -123,10 +124,62 @@ public sealed class MainViewModel : ObservableObject
 
     private void OnTick()
     {
+        // Self-healing: if pushes stopped arriving (pipe hiccup), resync.
+        if (SessionActive && !_resyncInFlight &&
+            (DateTime.UtcNow - _lastTimerPushUtc).TotalSeconds > 10)
+        {
+            _resyncInFlight = true;
+            _ = ResyncAsync();
+        }
+
         if (!SessionActive) return;
         if (_remainingSeconds > 0) _remainingSeconds--;
         UpdateCountdownUi();
     }
+
+    private async Task ResyncAsync()
+    {
+        try
+        {
+            var result = await _ipc.SendRequestAsync(IpcProtocol.MethodBootstrap, null);
+            if (result is not null &&
+                result.Value.TryGetProperty("session", out var sessionEl) &&
+                sessionEl.ValueKind == JsonValueKind.Object)
+            {
+                var state = sessionEl.TryGetProperty("state", out var st) ? st.GetString() : null;
+                var remaining = sessionEl.TryGetProperty("remaining_seconds", out var rem)
+                    ? rem.GetInt64()
+                    : -1;
+
+                if (state == "active" && remaining >= 0)
+                {
+                    SessionActive = true;
+                    _remainingSeconds = remaining;
+                    SimpleFileLogger.Info($"bootstrap resync: {remaining}s remaining");
+                }
+                else
+                {
+                    SessionActive = false;
+                    WarningText = "";
+                    CurrentView = Games;
+                }
+                UpdateCountdownUi();
+            }
+        }
+        catch
+        {
+            // unreachable agent — next tick retries
+        }
+        finally
+        {
+            _resyncInFlight = false;
+            _lastTimerPushUtc = DateTime.UtcNow; // give the stream 10s grace
+        }
+    }
+
+    private bool _timerPushLogged;
+    private bool _resyncInFlight;
+    private DateTime _lastTimerPushUtc = DateTime.UtcNow;
 
     private void UpdateCountdownUi()
     {
@@ -171,7 +224,14 @@ public sealed class MainViewModel : ObservableObject
                 case "timer":
                     if (push.Data.TryGetProperty("remaining_seconds", out var secs))
                     {
+                        _lastTimerPushUtc = DateTime.UtcNow;
                         _remainingSeconds = secs.GetInt64();
+                        if (!SessionActive) SessionActive = true;
+                        if (!_timerPushLogged)
+                        {
+                            _timerPushLogged = true;
+                            SimpleFileLogger.Info("timer stream received — IPC push path OK");
+                        }
                         UpdateCountdownUi();
                     }
                     break;

@@ -474,14 +474,22 @@ public sealed class AgentWorker : BackgroundService
         {            switch (req.Method)
             {
                 case "bootstrap":
-                    return new Dictionary<string, object?>
                     {
-                        ["pc_id"] = _pcId,
-                        ["session"] = _sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring
-                            ? new { state = "active", expires_at = DateTimeOffset.FromUnixTimeMilliseconds(_sessions.ExpiresEffMs() ?? 0).ToString("O") }
-                            : new { state = "none" },
-                        ["games"] = LoadGamesCache(),
-                    };
+                        var active = _sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring;
+                        return new Dictionary<string, object?>
+                        {
+                            ["pc_id"] = _pcId,
+                            ["session"] = active
+                                ? new
+                                {
+                                    state = "active",
+                                    expires_at = DateTimeOffset.FromUnixTimeMilliseconds(_sessions.ExpiresEffMs() ?? 0).ToString("O"),
+                                    remaining_seconds = _sessions.RemainingSeconds(),
+                                }
+                                : new { state = "none" },
+                            ["games"] = LoadGamesCache(),
+                        };
+                    }
 
                 case "session.start":
                     {

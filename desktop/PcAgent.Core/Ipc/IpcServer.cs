@@ -53,15 +53,17 @@ public sealed class IpcServer
 
                 await server.WaitForConnectionAsync(ct);
                 _log("launcher IPC connected");
-                if (ClientConnected is not null)
-                {
-                    try { await ClientConnected.Invoke(); } catch (Exception ex) { _log($"client-connected hook failed: {ex.Message}"); }
-                }
 
                 using (server)
                 using (var reader = new StreamReader(server, Encoding.UTF8, leaveOpen: true))
                 using (_currentWriter = new StreamWriter(server, Encoding.UTF8, leaveOpen: true) { AutoFlush = true })
                 {
+                    // Writer now exists — safe to push initial state.
+                    if (ClientConnected is not null)
+                    {
+                        try { await ClientConnected.Invoke(); } catch (Exception ex) { _log($"client-connected hook failed: {ex.Message}"); }
+                    }
+
                     while (!ct.IsCancellationRequested && server.IsConnected)
                     {
                         var line = await reader.ReadLineAsync(ct);
@@ -103,7 +105,11 @@ public sealed class IpcServer
     private async Task WriteAsync(string json)
     {
         var writer = _currentWriter;
-        if (writer is null) return;
+        if (writer is null)
+        {
+            _log($"write skipped (no launcher): {json[..Math.Min(40, json.Length)]}");
+            return;
+        }
         // Timer pushes (main loop) and request responses (IPC loop) share the
         // pipe — without this gate their frames interleave and corrupt JSON.
         await _writeGate.WaitAsync();
@@ -111,9 +117,9 @@ public sealed class IpcServer
         {
             await writer.WriteLineAsync(json);
         }
-        catch
+        catch (Exception ex)
         {
-            // launcher not connected — fine
+            _log($"write failed: {ex.Message}");
         }
         finally
         {
@@ -129,9 +135,9 @@ public sealed class IpcServer
             var message = JsonSerializer.Serialize(new { type, data });
             await WriteAsync(message);
         }
-        catch
+        catch (Exception ex)
         {
-            // launcher not connected — fine
+            _log($"push {type} failed: {ex.Message}");
         }
     }
 
