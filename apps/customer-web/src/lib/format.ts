@@ -1,0 +1,4 @@
+export function formatMoney(minorUnits: number): string {
+  const sign = minorUnits < 0 ? "-" : "";
+  return `${sign}₹${(Math.abs(minorUnits) / 100).toFixed(2)}`;
+}

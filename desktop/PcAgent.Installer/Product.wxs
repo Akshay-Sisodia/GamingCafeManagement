@@ -1,0 +1,60 @@
+<!-- GamingCafeAgent MSI definition (WiX v5).
+     Preprocessor vars AgentDir / LauncherDir are set from the wixproj. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall">
+
+  <Package Name="Gaming Cafe Agent"
+           Manufacturer="Gaming Cafe Platform"
+           Version="1.0.0"
+           UpgradeCode="7A1C2E9B-5D34-4F6A-9B8E-1C2D3E4F5A6B"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="ROOTDIR" Name="GamingCafe">
+        <Directory Id="AGENTDIR" Name="Agent">
+          <!-- Service: harvest the main exe; satellite files come from Content refs -->
+          <Component Id="AgentExe" Guid="8B3F4A2C-6E51-4D97-9A2B-3C4D5E6F7A8B">
+            <File Id="PcAgentExe" Name="PcAgent.exe" Source="$(AgentPublishDir)PcAgent.exe" KeyPath="yes" />
+            <ServiceInstall Id="GamingCafeAgentService"
+                            Name="GamingCafeAgent"
+                            DisplayName="Gaming Cafe PC Agent"
+                            Description="Session engine, lockdown and game deployment for gaming cafe terminals."
+                            Type="ownProcess"
+                            Start="auto" />
+            <ServiceControl Id="GamingCafeAgentServiceControl"
+                            Name="GamingCafeAgent"
+                            Start="install"
+                            Stop="both"
+                            Remove="uninstall"
+                            Wait="yes" />
+            <!-- Master PC content server must be reachable over the LAN -->
+            <fire:FirewallException Id="ContentServerFirewall"
+                                    Name="GamingCafe Content Server"
+                                    Port="7300"
+                                    Protocol="tcp"
+                                    Scope="localSubnet"
+                                    Profile="private" />
+          </Component>
+        </Directory>
+
+        <Directory Id="LAUNCHERDIR" Name="Launcher">
+          <Component Id="LauncherExe" Guid="9C475B3D-7F62-4EA8-AB3C-4D5E6F7A8B9C">
+            <File Id="LauncherMainExe" Name="GamingLauncher.exe"
+                  Source="$(LauncherPublishDir)GamingLauncher.exe" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Gaming Cafe Agent" Level="1">
+      <ComponentRef Id="AgentExe" />
+      <ComponentRef Id="LauncherExe" />
+    </Feature>
+
+  </Package>
+</Wix>

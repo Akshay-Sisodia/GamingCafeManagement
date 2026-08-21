@@ -1,0 +1,23 @@
+{
+  "name": "worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gaming-cafe/shared": "workspace:*",
+    "bullmq": "^5.34.0",
+    "drizzle-orm": "^0.44.0",
+    "ioredis": "^5.4.1",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

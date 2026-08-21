@@ -1,0 +1,108 @@
+﻿<Window x:Class="GamingLauncher.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:GamingLauncher.ViewModels"
+        xmlns:views="clr-namespace:GamingLauncher.Views"
+        Title="Gaming Zone"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        WindowState="Maximized"
+        ShowInTaskbar="False"
+        Background="#0B0F0E">
+
+    <Window.InputBindings>
+        <KeyBinding Modifiers="Control+Shift" Key="S" Command="{Binding OpenSuperadminCommand}" />
+    </Window.InputBindings>
+
+    <Window.Resources>
+        <DataTemplate DataType="{x:Type vm:GamesViewModel}">
+            <views:GameGridView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:FoodViewModel}">
+            <views:FoodOrderView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SessionInfoViewModel}">
+            <views:SessionInfoView />
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Session bar -->
+        <Border Grid.Row="0" Background="#111827" Padding="24,14">
+            <Grid>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding PcName}" Foreground="#9CA3AF" FontSize="18"
+                               VerticalAlignment="Center" Margin="0,0,24,0" />
+                    <Button Content="ORDER FOOD" Command="{Binding OpenFoodCommand}"
+                            Background="#1F2937" Foreground="#F9FAFB" FontSize="16" Padding="18,8"
+                            BorderThickness="0" Cursor="Hand" />
+                    <Button Content="SESSION INFO" Command="{Binding OpenSessionInfoCommand}"
+                            Background="#1F2937" Foreground="#F9FAFB" FontSize="16" Padding="18,8"
+                            BorderThickness="0" Cursor="Hand" Margin="12,0,0,0" />
+                </StackPanel>
+
+                <TextBlock Text="{Binding RemainingText}" Foreground="#10B981"
+                           FontSize="30" FontWeight="Bold" HorizontalAlignment="Right"
+                           VerticalAlignment="Center" FontFamily="Consolas" />
+            </Grid>
+        </Border>
+
+        <!-- Main content -->
+        <ContentControl Grid.Row="1" Content="{Binding CurrentView}" />
+
+        <!-- Warning banner -->
+        <Border Grid.Row="1" VerticalAlignment="Top" Margin="0,8,0,0"
+                Visibility="{Binding WarningText, Converter={StaticResource StringToVisibility}}"
+                Background="#7F111827" Padding="20,10" HorizontalAlignment="Center"
+                CornerRadius="6">
+            <TextBlock Text="{Binding WarningText}" Foreground="{Binding WarningColor}"
+                       FontSize="22" FontWeight="SemiBold" />
+        </Border>
+
+        <!-- Superadmin overlay -->
+        <Grid Visibility="{Binding Superadmin.IsVisible, Converter={StaticResource BoolToVisibility}}">
+            <Rectangle Fill="#CC000000" />
+            <Border Width="460" Padding="32" Background="#111827" CornerRadius="10"
+                    VerticalAlignment="Center" HorizontalAlignment="Center">
+                <StackPanel>
+                    <TextBlock Text="SUPERADMIN ACCESS" Foreground="#F9FAFB" FontSize="22"
+                               FontWeight="Bold" Margin="0,0,0,18" />
+
+                    <TextBlock Text="Password:" Foreground="#9CA3AF" FontSize="15" Margin="0,0,0,6" />
+                    <PasswordBox x:Name="SuperadminPasswordBox" FontSize="18" Padding="10,8"
+                                 Background="#0B0F0E" Foreground="#F9FAFB" BorderBrush="#374151" />
+
+                    <TextBlock Text="{Binding Superadmin.ErrorMessage}" Foreground="#EF4444"
+                               FontSize="14" Margin="0,10,0,0" TextWrapping="Wrap" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+                        <Button Content="ENTER" Background="#10B981" Foreground="#06281F"
+                                FontSize="16" FontWeight="SemiBold" Padding="26,10" BorderThickness="0"
+                                Cursor="Hand" Click="SuperadminEnter_Click" />
+                        <Button Content="CANCEL" Background="#374151" Foreground="#F9FAFB"
+                                FontSize="16" Padding="26,10" BorderThickness="0" Margin="12,0,0,0"
+                                Command="{Binding Superadmin.CancelCommand}" Cursor="Hand" />
+                    </StackPanel>
+
+                    <!-- Maintenance panel (after unlock) -->
+                    <StackPanel Visibility="{Binding Superadmin.Unlocked, Converter={StaticResource BoolToVisibility}}"
+                                Margin="0,20,0,0">
+                        <Button Content="ENTER WINDOWS" Command="{Binding Superadmin.EnterWindowsCommand}"
+                                Style="{StaticResource MaintenanceButton}" />
+                        <Button Content="RESTART PC" Command="{Binding Superadmin.RestartCommand}"
+                                Style="{StaticResource MaintenanceButton}" />
+                        <Button Content="SHUTDOWN PC" Command="{Binding Superadmin.ShutdownCommand}"
+                                Style="{StaticResource MaintenanceButton}" />
+                        <Button Content="EXIT SUPERADMIN" Command="{Binding Superadmin.ExitSuperadminCommand}"
+                                Style="{StaticResource MaintenanceButton}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

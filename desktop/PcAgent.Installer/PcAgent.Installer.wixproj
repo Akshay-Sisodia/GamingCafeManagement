@@ -1,0 +1,25 @@
+<!-- PcAgent Windows Service installer (WiX v5).
+     Build: dotnet build desktop/PcAgent.Installer -c Release
+     Output: desktop/PcAgent.Installer/bin/Release/GamingCafeAgent.msi -->
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <PropertyGroup>
+    <OutputName>GamingCafeAgent</OutputName>
+    <OutputType>Package</OutputType>
+    <Platform>x64</Platform>
+    <AgentPublishDir>$(MSBuildThisFileDirectory)..\PcAgent\bin\Release\net10.0\</AgentPublishDir>
+    <LauncherPublishDir>$(MSBuildThisFileDirectory)..\GamingLauncher\bin\Release\net10.0-windows\</LauncherPublishDir>
+    <DefineConstants>$(DefineConstants);AgentPublishDir=$(AgentPublishDir);LauncherPublishDir=$(LauncherPublishDir)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" PrivateAssets="all" />
+    <PackageReference Include="WixToolset.Firewall.wixext" Version="5.0.2" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="$(AgentPublishDir)**" Exclude="**\*.pdb" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="$(LauncherPublishDir)**" Exclude="**\*.pdb" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

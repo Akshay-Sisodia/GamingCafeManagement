@@ -1,0 +1,26 @@
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+.turbo/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# .NET
+bin/
+obj/
+*.user
+.vs/
+
+# Logs / OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Data
+infra/data/
+*.db-shm
+*.db-wal

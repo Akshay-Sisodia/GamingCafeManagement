@@ -1,0 +1,19 @@
+<UserControl x:Class="GamingLauncher.Views.SessionInfoView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+        <TextBlock Text="SESSION INFO" Foreground="#F9FAFB" FontSize="30" FontWeight="Bold"
+                   HorizontalAlignment="Center" Margin="0,0,0,26" />
+
+        <TextBlock Text="{Binding PcName, StringFormat=PC: {0}}" Foreground="#9CA3AF"
+                   FontSize="20" Margin="0,6" />
+        <TextBlock Text="{Binding StartedAt, StringFormat=Started: {0}}" Foreground="#9CA3AF"
+                   FontSize="20" Margin="0,6" />
+        <TextBlock Text="{Binding ExpiresAt, StringFormat=Expires: {0}}" Foreground="#9CA3AF"
+                   FontSize="20" Margin="0,6" />
+
+        <Button Content="BACK TO GAMES" Command="{Binding BackToGamesCommand}"
+                Background="#1F2937" Foreground="#F9FAFB" FontSize="16" Padding="28,10"
+                BorderThickness="0" Cursor="Hand" HorizontalAlignment="Center" Margin="0,32,0,0" />
+    </StackPanel>
+</UserControl>
