@@ -19,7 +19,7 @@ public sealed class IpcServer
     private readonly Action<string> _log;
     private readonly CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _writeGate = new(1, 1); // timer pushes vs responses
-    private StreamWriter? _currentWriter;
+private Func<string, Task>? _writeCurrent;
 
     /// <summary>Raised when a launcher connects — push initial state immediately.</summary>
     public event Func<Task>? ClientConnected;
@@ -56,36 +56,45 @@ public sealed class IpcServer
 
                 using (server)
                 using (var reader = new StreamReader(server, Encoding.UTF8, leaveOpen: true))
-                using (_currentWriter = new StreamWriter(server, Encoding.UTF8, leaveOpen: true) { AutoFlush = true })
+                using (var writer = new StreamWriter(server, Encoding.UTF8, leaveOpen: true) { AutoFlush = true })
                 {
-                    // Writer now exists — safe to push initial state.
-                    if (ClientConnected is not null)
+                    // Bind the write target for THIS connection only; cleared on
+                    // exit so a stale handle can never be used after disconnect.
+                    _writeCurrent = json => writer.WriteLineAsync(json);
+                    try
                     {
-                        try { await ClientConnected.Invoke(); } catch (Exception ex) { _log($"client-connected hook failed: {ex.Message}"); }
+                        if (ClientConnected is not null)
+                        {
+                            try { await ClientConnected.Invoke(); } catch (Exception ex) { _log($"client-connected hook failed: {ex.Message}"); }
+                        }
+
+                        while (!ct.IsCancellationRequested && server.IsConnected)
+                        {
+                            var line = await reader.ReadLineAsync(ct);
+                            if (line is null) break;
+
+                            object? result = null;
+                            try
+                            {
+                                using var doc = JsonDocument.Parse(line);
+                                var method = doc.RootElement.TryGetProperty("method", out var m) ? m.GetString() : null;
+                                var payload = doc.RootElement.TryGetProperty("payload", out var p)
+                                    ? p.Clone()
+                                    : JsonSerializer.SerializeToElement(new { });
+                                if (method is null) throw new ArgumentException("missing method");
+                                result = await _handler(new IpcRequest(method, payload), ct);
+                            }
+                            catch (Exception ex)
+                            {
+                                await WriteAsync(JsonSerializer.Serialize(new { ok = false, error = ex.Message }));
+                                continue;
+                            }
+                            await WriteAsync(JsonSerializer.Serialize(new { ok = true, data = result }));
+                        }
                     }
-
-                    while (!ct.IsCancellationRequested && server.IsConnected)
+                    finally
                     {
-                        var line = await reader.ReadLineAsync(ct);
-                        if (line is null) break;
-
-                        object? result = null;
-                        try
-                        {
-                            using var doc = JsonDocument.Parse(line);
-                            var method = doc.RootElement.TryGetProperty("method", out var m) ? m.GetString() : null;
-                            var payload = doc.RootElement.TryGetProperty("payload", out var p)
-                                ? p.Clone()
-                                : JsonSerializer.SerializeToElement(new { });
-                            if (method is null) throw new ArgumentException("missing method");
-                            result = await _handler(new IpcRequest(method, payload), ct);
-                        }
-                        catch (Exception ex)
-                        {
-                            await WriteAsync(JsonSerializer.Serialize(new { ok = false, error = ex.Message }));
-                            continue;
-                        }
-                        await WriteAsync(JsonSerializer.Serialize(new { ok = true, data = result }));
+                        _writeCurrent = null;
                     }
                 }
                 _log("launcher IPC disconnected; waiting for reconnect");
@@ -104,8 +113,8 @@ public sealed class IpcServer
 
     private async Task WriteAsync(string json)
     {
-        var writer = _currentWriter;
-        if (writer is null)
+        var write = _writeCurrent;
+        if (write is null)
         {
             _log($"write skipped (no launcher): {json[..Math.Min(40, json.Length)]}");
             return;
@@ -115,7 +124,7 @@ public sealed class IpcServer
         await _writeGate.WaitAsync();
         try
         {
-            await writer.WriteLineAsync(json);
+            await write(json);
         }
         catch (Exception ex)
         {
