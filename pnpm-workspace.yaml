@@ -5,3 +5,7 @@ packages:
 allowBuilds:
   esbuild: true
   msgpackr-extract: true
+
+# Dependencies are installed at Docker build time with --frozen-lockfile;
+# don't re-verify against the npm registry on every container boot.
+verifyDepsBeforeRun: false
