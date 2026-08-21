@@ -11,7 +11,7 @@ import {
 } from "../../auth/guards.js";
 import { problem } from "../../lib/problem.js";
 import { corsHeadersFor } from "../../lib/cors.js";
-import { getRedis } from "../../lib/redis.js";
+import { newRedisSubscriber } from "../../lib/redis.js";
 import {
   allocateEntry,
   getReplay,
@@ -89,7 +89,7 @@ async function streamEvents(
     }
   }
 
-  const subscriber = getRedis().duplicate();
+  const subscriber = newRedisSubscriber();
   await subscriber.subscribe(`events:${cafeId}`);
   subscriber.on("message", (_channel: string, message: string) => {
     const entry = rememberRemoteEntry(cafeId, message);
