@@ -12,8 +12,18 @@ export class ApiError extends Error {
   }
 }
 
-const TOKEN_KEY = "gc_token";
-const USER_KEY = "gc_user";
+const STORAGE_PREFIX = import.meta.env.VITE_AUTH_STORAGE_PREFIX ?? "gcm";
+const TOKEN_KEY = `${STORAGE_PREFIX}:access`;
+const REFRESH_KEY = `${STORAGE_PREFIX}:refresh`;
+const USER_KEY = `${STORAGE_PREFIX}:user`;
+
+function storage(): Storage | null {
+  try {
+    return sessionStorage;
+  } catch {
+    return null;
+  }
+}
 
 export interface AuthUser {
   id: string;
@@ -26,26 +36,39 @@ export interface AuthUser {
 export const auth = {
   token(): string | null {
     try {
-      return localStorage.getItem(TOKEN_KEY);
+      return storage()?.getItem(TOKEN_KEY) ?? null;
+    } catch {
+      return null;
+    }
+  },
+  refreshToken(): string | null {
+    try {
+      return storage()?.getItem(REFRESH_KEY) ?? null;
     } catch {
       return null;
     }
   },
   user(): AuthUser | null {
     try {
-      const raw = localStorage.getItem(USER_KEY);
+      const raw = storage()?.getItem(USER_KEY);
       return raw ? (JSON.parse(raw) as AuthUser) : null;
     } catch {
       return null;
     }
   },
-  signIn(token: string, user: AuthUser): void {
-    localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
+  signIn(token: string, user: AuthUser, refreshToken?: string): void {
+    const store = storage();
+    if (!store) return;
+    store.setItem(TOKEN_KEY, token);
+    if (refreshToken) store.setItem(REFRESH_KEY, refreshToken);
+    store.setItem(USER_KEY, JSON.stringify(user));
   },
   signOut(): void {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
+    const store = storage();
+    if (!store) return;
+    store.removeItem(TOKEN_KEY);
+    store.removeItem(REFRESH_KEY);
+    store.removeItem(USER_KEY);
   },
 };
 
@@ -54,7 +77,35 @@ interface RequestOptions {
   body?: unknown;
 }
 
-export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function refreshAccessToken(): Promise<boolean> {
+  const refresh = auth.refreshToken();
+  if (!refresh) return false;
+
+  refreshInFlight ??= (async () => {
+    try {
+      const res = await fetch(`${API}/v1/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refresh }),
+      });
+      if (!res.ok) return false;
+      const data = (await res.json()) as { access_token: string; refresh_token: string };
+      const user = auth.user();
+      if (!user) return false;
+      auth.signIn(data.access_token, user, data.refresh_token);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+async function execute<T>(path: string, options: RequestOptions): Promise<T> {
   const headers: Record<string, string> = {};
   const token = auth.token();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -81,7 +132,6 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     } catch {
       // non-JSON error body
     }
-    if (res.status === 401) auth.signOut();
     throw new ApiError(res.status, message, code);
   }
 
@@ -90,5 +140,19 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     return (await res.json()) as T;
   } catch {
     return undefined as T;
+  }
+}
+
+export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  try {
+    return await execute<T>(path, options);
+  } catch (err) {
+    const isAuthPath = path.startsWith("/auth/");
+    if (err instanceof ApiError && err.status === 401 && !isAuthPath) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) return await execute<T>(path, options);
+      auth.signOut();
+    }
+    throw err;
   }
 }

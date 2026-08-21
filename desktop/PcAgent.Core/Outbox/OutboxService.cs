@@ -24,7 +24,7 @@ public sealed class OutboxService
     /// <summary>Records an event and returns its id.</summary>
     public string Enqueue(string type, JsonElement payload)
     {
-        var eventId = Uuid7.NewId();
+        var eventId = Guid.CreateVersion7().ToString();
         var seq = _db.NextSeq();
         var occurredAt = DateTimeOffset.UtcNow.ToString("O");
         _db.ExecuteNonQuery(

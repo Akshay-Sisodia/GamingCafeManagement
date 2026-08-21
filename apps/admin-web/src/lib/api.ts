@@ -12,9 +12,18 @@ export class ApiError extends Error {
   }
 }
 
-const TOKEN_KEY = "gc_token";
-const REFRESH_KEY = "gc_refresh";
-const USER_KEY = "gc_user";
+const STORAGE_PREFIX = import.meta.env.VITE_AUTH_STORAGE_PREFIX ?? "gcm";
+const TOKEN_KEY = `${STORAGE_PREFIX}:access`;
+const REFRESH_KEY = `${STORAGE_PREFIX}:refresh`;
+const USER_KEY = `${STORAGE_PREFIX}:user`;
+
+function storage(): Storage | null {
+  try {
+    return sessionStorage;
+  } catch {
+    return null;
+  }
+}
 
 export interface AuthUser {
   id: string;
@@ -27,35 +36,39 @@ export interface AuthUser {
 export const auth = {
   token(): string | null {
     try {
-      return localStorage.getItem(TOKEN_KEY);
+      return storage()?.getItem(TOKEN_KEY) ?? null;
     } catch {
       return null;
     }
   },
   refreshToken(): string | null {
     try {
-      return localStorage.getItem(REFRESH_KEY);
+      return storage()?.getItem(REFRESH_KEY) ?? null;
     } catch {
       return null;
     }
   },
   user(): AuthUser | null {
     try {
-      const raw = localStorage.getItem(USER_KEY);
+      const raw = storage()?.getItem(USER_KEY);
       return raw ? (JSON.parse(raw) as AuthUser) : null;
     } catch {
       return null;
     }
   },
   signIn(token: string, user: AuthUser, refreshToken?: string): void {
-    localStorage.setItem(TOKEN_KEY, token);
-    if (refreshToken) localStorage.setItem(REFRESH_KEY, refreshToken);
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    const store = storage();
+    if (!store) return;
+    store.setItem(TOKEN_KEY, token);
+    if (refreshToken) store.setItem(REFRESH_KEY, refreshToken);
+    store.setItem(USER_KEY, JSON.stringify(user));
   },
   signOut(): void {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_KEY);
-    localStorage.removeItem(USER_KEY);
+    const store = storage();
+    if (!store) return;
+    store.removeItem(TOKEN_KEY);
+    store.removeItem(REFRESH_KEY);
+    store.removeItem(USER_KEY);
   },
 };
 

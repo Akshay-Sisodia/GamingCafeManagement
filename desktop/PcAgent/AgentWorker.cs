@@ -48,6 +48,7 @@ public sealed class AgentWorker : BackgroundService
     private bool _timerPushLogged;
     private long _lastServerTimeMs;
     private CancellationTokenSource _lifetime = new();
+    private List<LauncherGameDto> _launcherGames = new();
 
     public AgentWorker(AgentOptions options, ILogger<AgentWorker> logger)
     {
@@ -95,6 +96,15 @@ public sealed class AgentWorker : BackgroundService
         // Crash/reboot recovery: resume or expire any session found on disk
         // BEFORE the SSE loop starts adopting cloud state.
         _sessions.RecoverOnBoot();
+        _sessions.StateChanged += state =>
+        {
+            if (state == LocalSessionState.NoSession)
+            {
+                _gamingMode = false;
+                _timerPushLogged = false;
+            }
+            _ = PushSessionStateToLauncherAsync();
+        };
 
         _superadmin = new SuperadminService(
             _db,
@@ -106,7 +116,7 @@ public sealed class AgentWorker : BackgroundService
                 _outbox.Enqueue(action, JsonSerializer.SerializeToElement(new { action, metadata = JsonDocument.Parse(meta).RootElement.Clone() }));
                 _db.ExecuteNonQuery(
                     "INSERT OR IGNORE INTO audit_pending(event_id, action, occurred_at, metadata) VALUES($id,$a,$at,$m)",
-                    ("$id", Uuid7.NewId()), ("$a", action), ("$at", DateTimeOffset.UtcNow.ToString("O")), ("$m", meta));
+                    ("$id", Guid.CreateVersion7().ToString()), ("$a", action), ("$at", DateTimeOffset.UtcNow.ToString("O")), ("$m", meta));
             },
             msg => _logger.LogInformation("superadmin: {Msg}", msg));
 
@@ -118,6 +128,12 @@ public sealed class AgentWorker : BackgroundService
 
         StartSse();
         StartIpc();
+
+        if (IsPaired())
+        {
+            try { await SyncFromBootstrapAsync(stoppingToken); }
+            catch (Exception ex) { _logger.LogDebug("initial bootstrap sync: {Msg}", ex.Message); }
+        }
 
         _supervisor = new LauncherSupervisor(_options.LauncherPath,
             msg => _logger.LogInformation("launcher: {Msg}", msg));
@@ -171,7 +187,8 @@ public sealed class AgentWorker : BackgroundService
 
                 if (IsOnline() && DateTimeOffset.UtcNow - lastSyncPass > TimeSpan.FromSeconds(30))
                 {
-                    await _sync.SyncOnceAsync(stoppingToken);
+                    await _sync!.SyncOnceAsync(stoppingToken);
+                    await SyncFromBootstrapAsync(stoppingToken);
                     lastSyncPass = DateTimeOffset.UtcNow;
                 }
             }
@@ -354,7 +371,7 @@ public sealed class AgentWorker : BackgroundService
                             var handler = new CommandHandler(
                                 _sessions!,
                                 _processes!,
-                                RefreshConfigAsync,
+                                () => Task.CompletedTask,
                                 ackApplied: id => _api!.AckCommandAsync(_deviceToken!, _pcId!, id, "applied", null, CancellationToken.None),
                                 ackFailed: (id, code) => _api!.AckCommandAsync(_deviceToken!, _pcId!, id, "failed", code, CancellationToken.None),
                                 log: msg => _logger.LogInformation("command: {Msg}", msg));
@@ -368,22 +385,28 @@ public sealed class AgentWorker : BackgroundService
                     break;
                 }
             case "session.updated":
-                {
-                    using var doc = JsonDocument.Parse(ev.Data);
-                    var expiresAt = doc.RootElement.TryGetProperty("expires_at", out var e)
-                        ? DateTimeOffset.Parse(e.GetString()!).ToUnixTimeMilliseconds()
-                        : (long?)null;
-                    var status = doc.RootElement.TryGetProperty("status", out var s) ? s.GetString() : null;
-
-                    if (expiresAt is not null && status is not null)
-                    {
-                        AdoptServerSessionState(status, expiresAt.Value);
-                    }
-                    break;
-                }
+            case "session.ended":
+            case "session.cancelled":
+            case "session.expired":
+                ApplySessionUpdatedFromSse(ev.Data);
+                break;
             default:
                 _logger.LogDebug("SSE event {Name} ignored", ev.EventName);
                 break;
+        }
+    }
+
+    private void ApplySessionUpdatedFromSse(string data)
+    {
+        using var doc = JsonDocument.Parse(data);
+        var expiresAt = doc.RootElement.TryGetProperty("expires_at", out var e)
+            ? DateTimeOffset.Parse(e.GetString()!).ToUnixTimeMilliseconds()
+            : (long?)null;
+        var status = doc.RootElement.TryGetProperty("status", out var s) ? s.GetString() : null;
+
+        if (expiresAt is not null && status is not null)
+        {
+            AdoptServerSessionState(status, expiresAt.Value);
         }
     }
 
@@ -421,9 +444,91 @@ public sealed class AgentWorker : BackgroundService
                 _sessions.End($"cloud_{status}", suppressOutboxEcho: true);
                 _processes!.KillAllTracked();
                 _gamingMode = false;
+                _logger.LogInformation("adopted remote session end ({Status})", status);
             }
         }
     }
+
+    private async Task PushSessionStateToLauncherAsync()
+    {
+        if (_ipc is null || _sessions is null) return;
+
+        var active = _sessions.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring;
+        var remaining = active ? _sessions.RemainingSeconds() : 0;
+
+        await _ipc.PushAsync("session", JsonSerializer.SerializeToElement(new
+        {
+            state = active ? "active" : "none",
+            expires_at = active
+                ? DateTimeOffset.FromUnixTimeMilliseconds(_sessions.ExpiresEffMs() ?? 0).ToString("O")
+                : null,
+            remaining_seconds = remaining,
+        }));
+        await _ipc.PushAsync("timer", JsonSerializer.SerializeToElement(
+            new { remaining_seconds = remaining }));
+    }
+
+    private void ApplyGamesFromBootstrap(JsonElement bootstrap)
+    {
+        if (!bootstrap.TryGetProperty("games", out var rows) || rows.ValueKind != JsonValueKind.Array)
+            return;
+
+        var list = rows.EnumerateArray()
+            .Select(ParseLauncherGame)
+            .Where(g => g is not null)
+            .Cast<LauncherGameDto>()
+            .ToList();
+        if (list.Count == 0) return;
+
+        _launcherGames = list;
+        _ = PushGamesToLauncherAsync();
+    }
+
+    private static LauncherGameDto? ParseLauncherGame(JsonElement row)
+    {
+        if (!row.TryGetProperty("game", out var game)) return null;
+
+        var exe = game.TryGetProperty("executable_path", out var ep) ? ep.GetString() : null;
+        if (row.TryGetProperty("installation", out var inst) && inst.ValueKind == JsonValueKind.Object &&
+            inst.TryGetProperty("install_path", out var ip) && !string.IsNullOrWhiteSpace(ip.GetString()))
+        {
+            exe = ip.GetString();
+        }
+        if (string.IsNullOrWhiteSpace(exe)) return null;
+
+        return new LauncherGameDto(
+            game.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
+            game.TryGetProperty("name", out var n) ? n.GetString() ?? "Game" : "Game",
+            exe,
+            game.TryGetProperty("launch_args", out var la) ? la.GetString() ?? "" : "",
+            game.TryGetProperty("icon_url", out var icon) ? icon.GetString() : null,
+            game.TryGetProperty("category", out var cat) ? cat.GetString() : null);
+    }
+
+    private async Task PushGamesToLauncherAsync()
+    {
+        if (_ipc is null || _launcherGames.Count == 0) return;
+
+        var items = _launcherGames.Select(g => new
+        {
+            game_id = g.Id,
+            name = g.Name,
+            executable_path = g.ExecutablePath,
+            launch_args = g.LaunchArgs,
+            icon_url = g.IconUrl,
+            category = g.Category,
+        }).ToList();
+
+        await _ipc.PushAsync("games", JsonSerializer.SerializeToElement(new { items }));
+    }
+
+    private sealed record LauncherGameDto(
+        string Id,
+        string Name,
+        string ExecutablePath,
+        string LaunchArgs,
+        string? IconUrl,
+        string? Category);
 
     /// <summary>
     /// Server-refetch safety net: on every SSE (re)connect, pull the authoritative
@@ -456,15 +561,16 @@ public sealed class AgentWorker : BackgroundService
                 _sessions.End("server_reset", suppressOutboxEcho: true);
                 _processes!.KillAllTracked();
                 _gamingMode = false;
+                _logger.LogInformation("cleared local session after server bootstrap reset");
             }
+
+            ApplyGamesFromBootstrap(bootstrap);
         }
         catch (Exception ex)
         {
             _logger.LogDebug("bootstrap session sync unavailable: {Msg}", ex.Message);
         }
     }
-
-    private Task RefreshConfigAsync() => Task.CompletedTask;
 
     // ---- IPC -------------------------------------------------------------------
 
@@ -487,7 +593,15 @@ public sealed class AgentWorker : BackgroundService
                                     remaining_seconds = _sessions.RemainingSeconds(),
                                 }
                                 : new { state = "none" },
-                            ["games"] = LoadGamesCache(),
+                            ["games"] = _launcherGames.Select(g => new
+                            {
+                                game_id = g.Id,
+                                name = g.Name,
+                                executable_path = g.ExecutablePath,
+                                launch_args = g.LaunchArgs,
+                                icon_url = g.IconUrl,
+                                category = g.Category,
+                            }).ToList(),
                         };
                     }
 
@@ -566,26 +680,13 @@ public sealed class AgentWorker : BackgroundService
         // shouldn't wait a second for the next timer tick to know anything.
         _ipc.ClientConnected += async () =>
         {
-            var active = _sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring;
-            await _ipc.PushAsync("session", JsonSerializer.SerializeToElement(new
-            {
-                state = active ? "active" : "none",
-                expires_at = active
-                    ? DateTimeOffset.FromUnixTimeMilliseconds(_sessions.ExpiresEffMs() ?? 0).ToString("O")
-                    : null,
-            }));
-            if (active)
-            {
-                await _ipc.PushAsync("timer", JsonSerializer.SerializeToElement(
-                    new { remaining_seconds = _sessions.RemainingSeconds() }));
-            }
             _timerPushLogged = false;
+            await PushSessionStateToLauncherAsync();
+            await PushGamesToLauncherAsync();
         };
 
         _ipc.Start();
     }
-
-    private static object[] LoadGamesCache() => Array.Empty<object>();
 
     // ---- session events ----------------------------------------------------------
 
@@ -649,7 +750,8 @@ public sealed class AgentWorker : BackgroundService
         }
     }
 
-    // ---- rate limiting (persisted across reboots) -------------------------------------
+    // ponytail: rate-limit DB helpers stay here — SuperadminService already delegates via callbacks;
+    // moving SQL into the service would just duplicate AgentDatabase access patterns.
 
     private SuperadminService.RateLimitDecision CheckRateLimit(string scope)
     {

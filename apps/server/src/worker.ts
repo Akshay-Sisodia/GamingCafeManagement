@@ -4,7 +4,12 @@ import { Worker } from "bullmq";
 import pino from "pino";
 import { config } from "./config.js";
 import { closeDb, db } from "./db/index.js";
-import { closeQueues, ensureSessionSweepSchedule } from "./lib/queues.js";
+import { rowsOf } from "./db/rows.js";
+import {
+  closeQueues,
+  ensureCommandExpireSchedule,
+  ensureSessionSweepSchedule,
+} from "./lib/queues.js";
 import { closeRedis, newRedisConnection } from "./lib/redis.js";
 import {
   expireDueSessions,
@@ -12,12 +17,6 @@ import {
 } from "./modules/sessions/expiry.js";
 
 const log = pino({ level: config.LOG_LEVEL });
-
-function rowsOf<T>(result: unknown): T[] {
-  if (Array.isArray(result)) return result as T[];
-  const maybe = result as { rows?: T[] };
-  return maybe.rows ?? [];
-}
 
 export interface WorkerHandle {
   commandWorker: Worker;
@@ -70,7 +69,7 @@ export async function startWorker(): Promise<WorkerHandle> {
     log.error({ jobId: job?.id ?? null, err }, "sessions worker job failed");
   });
 
-  await ensureSessionSweepSchedule();
+  await Promise.all([ensureCommandExpireSchedule(), ensureSessionSweepSchedule()]);
 
   let closed = false;
   const close = async (): Promise<void> => {

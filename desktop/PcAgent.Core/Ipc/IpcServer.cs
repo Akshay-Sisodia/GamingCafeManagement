@@ -41,12 +41,16 @@ public sealed class IpcServer
     {
         while (!ct.IsCancellationRequested)
         {
+            // Explicit 4 KiB buffers — the default constructor uses a 0-byte
+            // output buffer on Windows, which deadlocks StreamWriter setup.
             var server = new NamedPipeServerStream(
                 PipeName,
                 PipeDirection.InOut,
                 maxNumberOfServerInstances: 1,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous);
+                PipeOptions.Asynchronous,
+                inBufferSize: 4096,
+                outBufferSize: 4096);
 
             try
             {
@@ -62,37 +66,26 @@ public sealed class IpcServer
                 continue;
             }
 
-            var conn = ++_connSeq;
-            _log($"pipe handshake complete (conn #{conn})");
-
             try
             {
                 using (server)
                 using (var reader = new StreamReader(server, Encoding.UTF8, leaveOpen: true))
                 using (var writer = new StreamWriter(server, Encoding.UTF8, leaveOpen: true) { AutoFlush = true })
                 {
-                    _log($"pipe streams constructed (conn #{conn})");
-
-                    // Bind the write target for THIS connection only; cleared on
-                    // exit so a stale handle can never be used after a disconnect.
                     _writeCurrent = json => writer.WriteLineAsync(json);
-                    _boundConn = conn;
+                    _boundConn = Interlocked.Increment(ref _connSeq);
                     _log($"pipe writer bound (conn #{_boundConn})");
 
                     if (ClientConnected is not null)
                     {
                         try { await ClientConnected.Invoke(); }
-                        catch (Exception ex) { _log($"client-connected hook failed (conn #{conn}): {ex.Message}"); }
+                        catch (Exception ex) { _log($"client-connected hook failed: {ex.Message}"); }
                     }
 
                     while (!ct.IsCancellationRequested && server.IsConnected)
                     {
                         var line = await reader.ReadLineAsync(ct);
-                        if (line is null)
-                        {
-                            _log($"read loop exit (conn #{conn}): client EOF");
-                            break;
-                        }
+                        if (line is null) break;
 
                         object? result = null;
                         try
@@ -112,19 +105,17 @@ public sealed class IpcServer
                         }
                         await WriteAsync(JsonSerializer.Serialize(new { ok = true, data = result }));
                     }
-                    _log($"read loop ended (conn #{conn})");
                 }
             }
             catch (Exception ex)
             {
-                // Anything escaping here previously killed the accept loop silently.
-                _log($"CONNECTION LOOP CRASHED (conn #{conn}): {ex.GetType().Name}: {ex.Message}");
+                _log($"IPC connection error: {ex.GetType().Name}: {ex.Message}");
             }
             finally
             {
                 _writeCurrent = null;
                 _boundConn = -1;
-                _log($"launcher IPC disconnected (conn #{conn}); waiting for reconnect");
+                _log("launcher IPC disconnected; waiting for reconnect");
             }
         }
     }
@@ -132,11 +123,8 @@ public sealed class IpcServer
     private async Task WriteAsync(string json)
     {
         var write = _writeCurrent;
-        if (write is null)
-        {
-            _log($"write skipped (no bound writer, last conn #{_boundConn}): {json[..Math.Min(48, json.Length)]}");
-            return;
-        }
+        if (write is null) return;
+
         // Timer pushes (main loop) and request responses (read loop) share the
         // pipe — without this gate their frames interleave and corrupt JSON.
         await _writeGate.WaitAsync();
@@ -146,7 +134,7 @@ public sealed class IpcServer
         }
         catch (Exception ex)
         {
-            _log($"write failed (conn #{_boundConn}): {ex.Message}");
+            _log($"IPC write failed (conn #{_boundConn}): {ex.Message}");
         }
         finally
         {

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { uuidv7 } from "@gaming-cafe/shared";
 import { db } from "../../db/index.js";
+import { rowsOf } from "../../db/rows.js";
 import { sessionEvents } from "../../db/schema.js";
 import { writeAudit } from "../audit/service.js";
 import { publishToCafe } from "../realtime/service.js";
@@ -10,12 +11,6 @@ interface ExpiredRow {
   cafe_id: string;
   pc_id: string;
   expires_at: string | Date;
-}
-
-function rowsOf<T>(result: unknown): T[] {
-  if (Array.isArray(result)) return result as T[];
-  const maybe = result as { rows?: T[] };
-  return maybe.rows ?? [];
 }
 
 export async function expireDueSessions(dbClient = db): Promise<ExpiredRow[]> {

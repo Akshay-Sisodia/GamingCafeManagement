@@ -79,9 +79,9 @@ public sealed class ProcessController : IProcessController
         _ = LockWorkStation();
     }
 
-    public void RestartMachine() => RunShutdown("/r /t 5 /c \"Gaming cafe management\"");
+    public void RestartMachine() => RunShutdown("/r /t 5 /c \"PACMAN Gaming Cafe\"");
 
-    public void ShutdownMachine() => RunShutdown("/s /t 5 /c \"Gaming cafe management\"");
+    public void ShutdownMachine() => RunShutdown("/s /t 5 /c \"PACMAN Gaming Cafe\"");
 
     private void RunShutdown(string args)
     {

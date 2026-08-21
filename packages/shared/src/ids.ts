@@ -35,15 +35,3 @@ export function uuidv7(now: Date = new Date()): string {
     hex.slice(20, 32),
   ].join("-");
 }
-
-/** Extract the unix-ms timestamp embedded in a UUIDv7. Returns null for other versions. */
-export function uuidv7Timestamp(id: string): number | null {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)) {
-    return null;
-  }
-  let ts = 0;
-  for (const byteHex of id.replace(/-/g, "").slice(0, 12).match(/.{2}/g) ?? []) {
-    ts = ts * 256 + parseInt(byteHex, 16);
-  }
-  return ts;
-}

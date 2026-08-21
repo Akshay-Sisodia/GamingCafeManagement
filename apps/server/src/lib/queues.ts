@@ -1,5 +1,4 @@
 import { Queue } from "bullmq";
-import { config } from "../config.js";
 import { newRedisConnection } from "./redis.js";
 
 let commandQueue: Queue | null = null;
@@ -23,11 +22,15 @@ export function getSessionsQueue(): Queue {
   return sessionsQueue;
 }
 
-export async function enqueueCommandTimeout(commandId: string): Promise<void> {
+export async function ensureCommandExpireSchedule(): Promise<void> {
   try {
-    await getCommandQueue().add("command-timeout", { commandId }, { delay: 60_000 });
-  } catch {
-    // worker sweep still expires stale commands from DB state
+    await getCommandQueue().add(
+      "expire",
+      {},
+      { repeat: { every: 60_000 }, jobId: "command-expire" },
+    );
+  } catch (err) {
+    console.error("[queues] ensureCommandExpireSchedule failed:", err);
   }
 }
 
@@ -38,8 +41,8 @@ export async function ensureSessionSweepSchedule(): Promise<void> {
       {},
       { repeat: { every: 15_000 }, jobId: "session-sweep" },
     );
-  } catch {
-    // redis unavailable; retried on next start
+  } catch (err) {
+    console.error("[queues] ensureSessionSweepSchedule failed:", err);
   }
 }
 

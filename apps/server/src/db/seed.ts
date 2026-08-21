@@ -16,8 +16,9 @@ import {
   users,
 } from "./schema.js";
 
-const CAFE_NAME = "Gaming Zone";
+const CAFE_NAME = "PACMAN Gaming Cafe";
 const PASSWORD = "Password123!";
+const GUEST_WALKIN_EMAIL = "guest-walkin@gc.local";
 
 async function findOrCreate<K extends string>(
   label: string,
@@ -31,13 +32,9 @@ async function findOrCreate<K extends string>(
   return created.id;
 }
 
-async function main(): Promise<void> {
-  console.log("seeding Gaming Zone...");
-  const passwordHash = await hash(PASSWORD);
-
-  // ---- Tenant + cafe -------------------------------------------------------
+async function seedTenantAndCafe(): Promise<string> {
   const tenantId = await findOrCreate(
-    "tenant Gaming Zone",
+    `tenant ${CAFE_NAME}`,
     async () =>
       (
         await db
@@ -53,7 +50,7 @@ async function main(): Promise<void> {
   );
 
   const cafeId = await findOrCreate(
-    "cafe Gaming Zone",
+    `cafe ${CAFE_NAME}`,
     async () =>
       (
         await db
@@ -75,8 +72,10 @@ async function main(): Promise<void> {
           .returning()
       )[0]!,
   );
+  return cafeId;
+}
 
-  // ---- PC tiers --------------------------------------------------------------
+async function seedTiers(cafeId: string): Promise<Map<string, string>> {
   const tierIds = new Map<string, string>();
   for (const tier of [
     { name: "Standard", description: "Standard gaming rig" },
@@ -102,8 +101,10 @@ async function main(): Promise<void> {
     );
     tierIds.set(tier.name, id);
   }
+  return tierIds;
+}
 
-  // ---- Staff users -----------------------------------------------------------
+async function seedStaff(cafeId: string, passwordHash: string): Promise<void> {
   for (const user of [
     { email: "owner@gc.local", role: "owner" as const, name: "Cafe Owner" },
     { email: "manager@gc.local", role: "manager" as const, name: "Floor Manager" },
@@ -140,8 +141,9 @@ async function main(): Promise<void> {
         )[0]!,
     );
   }
+}
 
-  // ---- PCs -------------------------------------------------------------------
+async function seedPcs(cafeId: string, tierIds: Map<string, string>): Promise<void> {
   for (let i = 1; i <= 20; i++) {
     const name = `PC-${String(i).padStart(2, "0")}`;
     const tierName = i === 7 || i === 15 ? "Premium" : "Standard";
@@ -164,8 +166,10 @@ async function main(): Promise<void> {
         )[0]!,
     );
   }
+}
 
-  // ---- Games + published versions ---------------------------------------------
+async function seedGames(cafeId: string): Promise<Map<string, string>> {
+  const gameVersionIds = new Map<string, string>();
   const gameDefs = [
     {
       name: "CS2",
@@ -214,7 +218,6 @@ async function main(): Promise<void> {
     },
   ];
 
-  const gameVersionIds = new Map<string, string>();
   for (const def of gameDefs) {
     const gameId = await findOrCreate(
       `game ${def.name}`,
@@ -272,8 +275,13 @@ async function main(): Promise<void> {
     );
     gameVersionIds.set(def.name, versionId);
   }
+  return gameVersionIds;
+}
 
-  // ---- Ready installations on PC-01..PC-06 -------------------------------------
+async function seedGameInstallations(
+  cafeId: string,
+  gameVersionIds: Map<string, string>,
+): Promise<void> {
   const pcRows = await db
     .select({ id: pcs.id, name: pcs.name })
     .from(pcs)
@@ -311,8 +319,9 @@ async function main(): Promise<void> {
     }
   }
   console.log("seeded pc_game_installations for PC-01..PC-06");
+}
 
-  // ---- Pricing rules ------------------------------------------------------------
+async function seedPricing(cafeId: string): Promise<void> {
   const pricingDefs = [
     {
       name: "Standard",
@@ -371,8 +380,9 @@ async function main(): Promise<void> {
         )[0]!,
     );
   }
+}
 
-  // ---- Menu -----------------------------------------------------------------
+async function seedMenu(cafeId: string): Promise<void> {
   const menuDef: Array<{
     category: string;
     displayOrder: number;
@@ -463,10 +473,11 @@ async function main(): Promise<void> {
       );
     }
   }
+}
 
-  // ---- Customers ---------------------------------------------------------------
+async function seedCustomers(cafeId: string, passwordHash: string): Promise<void> {
   await findOrCreate(
-    "customer guest-walkin@example.com",
+    `customer ${GUEST_WALKIN_EMAIL}`,
     async () =>
       (
         await db
@@ -475,7 +486,7 @@ async function main(): Promise<void> {
           .where(
             and(
               eq(customers.cafeId, cafeId),
-              sql`lower(${customers.email}) = 'guest-walkin@example.com'`,
+              sql`lower(${customers.email}) = ${GUEST_WALKIN_EMAIL}`,
             ),
           )
           .limit(1)
@@ -486,7 +497,7 @@ async function main(): Promise<void> {
           .insert(customers)
           .values({
             cafeId,
-            email: "guest-walkin@example.com",
+            email: GUEST_WALKIN_EMAIL,
             name: "Walk-in Guest",
             authMethod: "none",
             passwordHash: null,
@@ -524,8 +535,21 @@ async function main(): Promise<void> {
           .returning()
       )[0]!,
   );
+}
 
-  console.log("seed complete: Gaming Zone is ready");
+async function main(): Promise<void> {
+  console.log("seeding PACMAN Gaming Cafe...");
+  const passwordHash = await hash(PASSWORD);
+  const cafeId = await seedTenantAndCafe();
+  const tierIds = await seedTiers(cafeId);
+  await seedStaff(cafeId, passwordHash);
+  await seedPcs(cafeId, tierIds);
+  const gameVersionIds = await seedGames(cafeId);
+  await seedGameInstallations(cafeId, gameVersionIds);
+  await seedPricing(cafeId);
+  await seedMenu(cafeId);
+  await seedCustomers(cafeId, passwordHash);
+  console.log("seed complete: PACMAN Gaming Cafe is ready");
 }
 
 main()

@@ -12,7 +12,7 @@ namespace GamingLauncher.Ipc;
 /// Responses: {"ok":true,"data":{...}} | {"ok":false,"error":"..."}
 /// Pushes:    {"type":"timer","data":{"remaining_seconds":N}}
 ///            {"type":"session","data":{"state":"active|none","expires_at":"..."}}
-///            {"type":"games","data":{"items":[{game_id,name,executable_path,launch_args}]}}
+///            {"type":"games","data":{"items":[{game_id,name,executable_path,launch_args,icon_url,category}]}}
 ///            {"type":"order_status","data":{"order_number":N,"status":"..."}}
 /// The launcher is unprivileged — it holds no tokens; the agent proxies cloud calls.
 /// </summary>
@@ -52,7 +52,7 @@ public sealed class NamedPipeIpcClient : IDisposable
         {
             try
             {
-                _pipe = new NamedPipeClientStream(".", IpcProtocol.PipeName, PipeDirection.InOut);
+                _pipe = new NamedPipeClientStream(".", IpcProtocol.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
                 await _pipe.ConnectAsync(3000, ct);
                 _reader = new StreamReader(_pipe, Encoding.UTF8, leaveOpen: true);
                 _writer = new StreamWriter(_pipe, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };

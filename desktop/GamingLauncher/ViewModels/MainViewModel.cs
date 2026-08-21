@@ -7,7 +7,7 @@ using GamingLauncher.Services;
 
 namespace GamingLauncher.ViewModels;
 
-public sealed record GameTileVm(string GameId, string Name, string ExecutablePath, string LaunchArgs);
+public sealed class GamingModeViewModel;
 
 public sealed record CartLineVm(string ItemId, string Name, int UnitPricePaise);
 
@@ -19,21 +19,33 @@ public sealed class MainViewModel : ObservableObject
     private long _remainingSeconds;
     private bool _sessionActive;
     private string _remainingText = "--:--:--";
-    private string _warningText = "";
-    private string _warningColor = "#10B981";
+    private string _sessionAlertText = "";
+    private string _sessionAlertColor = "#34D399";
+    private string _timerColor = "#34D399";
+    private string _agentStatusText = "Connecting to agent…";
+    private bool _agentConnected;
     private object? _currentView;
-    private string _pcName = "PC";
+    private string _pcName = "Station";
+    private int _contentSwitchKey;
 
     public GamesViewModel Games { get; } = new();
     public FoodViewModel Food { get; } = new();
     public SuperadminViewModel Superadmin { get; } = new();
+
+    public GamingModeViewModel GamingMode { get; } = new();
 
     public MainViewModel(NamedPipeIpcClient ipc)
     {
         _ipc = ipc;
         _ipc.PushReceived += OnPush;
         _ipc.ConnectionChanged += connected =>
-            WarningText = connected ? "" : "AGENT OFFLINE — limited mode";
+        {
+            AgentConnected = connected;
+            AgentStatusText = connected
+                ? "Connected — session sync active"
+                : "Agent offline — demo games only, orders may fail";
+            if (!connected) SessionAlertText = "";
+        };
 
         Games.LaunchRequested += async game =>
         {
@@ -41,12 +53,12 @@ public sealed class MainViewModel : ObservableObject
                 new { executable_path = game.ExecutablePath, launch_args = game.LaunchArgs });
             if (result is null)
             {
-                WarningText = "Could not launch game (agent unreachable)";
+                SessionAlertText = "Could not launch game — agent unreachable";
+                SessionAlertColor = "#F87171";
             }
             else
             {
-                // Hide launcher content while gaming; agent will keep the session.
-                CurrentView = null; // shows "gaming in progress" minimal screen
+                CurrentView = GamingMode;
             }
         };
 
@@ -77,6 +89,12 @@ public sealed class MainViewModel : ObservableObject
         OpenSessionInfoCommand = new RelayCommand(_ => CurrentView = SessionInfo);
         BackToGamesCommand = new RelayCommand(_ => CurrentView = Games);
         OpenSuperadminCommand = new RelayCommand(_ => Superadmin.Show());
+        ToggleThemeCommand = new RelayCommand(_ =>
+        {
+            App.Themes.Toggle();
+            OnPropertyChanged(nameof(IsDayMode));
+            OnPropertyChanged(nameof(ThemeToggleLabel));
+        });
 
         _tick = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _tick.Tick += (_, _) => OnTick();
@@ -93,34 +111,83 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand OpenSessionInfoCommand { get; }
     public RelayCommand BackToGamesCommand { get; }
     public RelayCommand OpenSuperadminCommand { get; }
+    public RelayCommand ToggleThemeCommand { get; }
+
+    public bool IsDayMode => App.Themes.IsDayMode;
+
+    public string ThemeToggleLabel => IsDayMode ? "◐ Night" : "◑ Day";
+
+    public int ContentSwitchKey { get => _contentSwitchKey; private set => Set(ref _contentSwitchKey, value); }
 
     public object? CurrentView
     {
         get => _currentView;
         set
         {
-            if (Set(ref _currentView, value) && value is null)
+            if (!Set(ref _currentView, value)) return;
+            ContentSwitchKey++;
+            NotifyNavSelection();
+            if (value is GamingModeViewModel)
             {
-                // Gaming mode: return to game grid after a grace period so an
-                // exited game always lands back on a usable launcher.
                 Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(_ =>
                     Application.Current?.Dispatcher.Invoke(() =>
                     {
-                        if (CurrentView is null) CurrentView = Games;
+                        if (CurrentView is GamingModeViewModel) CurrentView = Games;
                     }));
             }
         }
     }
 
+    public bool IsGamesSelected => ReferenceEquals(CurrentView, Games);
+    public bool IsFoodSelected => ReferenceEquals(CurrentView, Food);
+    public bool IsSessionInfoSelected => ReferenceEquals(CurrentView, SessionInfo);
+
+    public bool AgentConnected { get => _agentConnected; private set => Set(ref _agentConnected, value); }
+
+    public string AgentStatusText { get => _agentStatusText; private set => Set(ref _agentStatusText, value); }
+
+    public string SessionAlertText { get => _sessionAlertText; private set => Set(ref _sessionAlertText, value); }
+
+    public string SessionAlertColor { get => _sessionAlertColor; private set => Set(ref _sessionAlertColor, value); }
+
+    public string TimerColor { get => _timerColor; private set => Set(ref _timerColor, value); }
+
     public bool SessionActive { get => _sessionActive; private set => Set(ref _sessionActive, value); }
 
     public string RemainingText { get => _remainingText; private set => Set(ref _remainingText, value); }
 
-    public string WarningText { get => _warningText; private set => Set(ref _warningText, value); }
+    public string PcName { get => _pcName; set { if (Set(ref _pcName, value)) SessionInfo.PcName = value; } }
 
-    public string WarningColor { get => _warningColor; private set => Set(ref _warningColor, value); }
+    private void NotifyNavSelection()
+    {
+        OnPropertyChanged(nameof(IsGamesSelected));
+        OnPropertyChanged(nameof(IsFoodSelected));
+        OnPropertyChanged(nameof(IsSessionInfoSelected));
+    }
 
-    public string PcName { get => _pcName; set => Set(ref _pcName, value); }
+    private static string FormatPcLabel(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return "Station";
+        if (id.Contains('-', StringComparison.Ordinal) && id.Length > 8)
+            return $"Station · {id[^4..].ToUpperInvariant()}";
+        return id;
+    }
+
+    private void ApplySessionInfo(string? expiresAtIso, long remainingSeconds)
+    {
+        SessionInfo.PcName = PcName;
+        if (expiresAtIso is not null &&
+            DateTimeOffset.TryParse(expiresAtIso, out var expiresAt) &&
+            remainingSeconds >= 0)
+        {
+            SessionInfo.ExpiresAt = expiresAt.LocalDateTime.ToString("f");
+            SessionInfo.StartedAt = expiresAt.AddSeconds(-remainingSeconds).LocalDateTime.ToString("f");
+            return;
+        }
+
+        SessionInfo.StartedAt = "—";
+        SessionInfo.ExpiresAt = "—";
+    }
 
     private void OnTick()
     {
@@ -161,8 +228,12 @@ public sealed class MainViewModel : ObservableObject
                 else
                 {
                     SessionActive = false;
-                    WarningText = "";
+                    SessionAlertText = "";
                     CurrentView = Games;
+                }
+                if (sessionEl.TryGetProperty("expires_at", out var expEl))
+                {
+                    ApplySessionInfo(expEl.GetString(), remaining);
                 }
                 UpdateCountdownUi();
             }
@@ -191,29 +262,35 @@ public sealed class MainViewModel : ObservableObject
 
         if (_remainingSeconds <= 60)
         {
-            WarningText = "1 MINUTE REMAINING";
-            WarningColor = "#EF4444";
+            SessionAlertText = "1 minute remaining";
+            SessionAlertColor = "#F87171";
+            TimerColor = "#F87171";
         }
         else if (_remainingSeconds <= 300)
         {
-            WarningText = "5 MINUTES REMAINING";
-            WarningColor = "#F59E0B";
+            SessionAlertText = "5 minutes remaining";
+            SessionAlertColor = "#FBBF24";
+            TimerColor = "#FBBF24";
         }
         else if (_remainingSeconds <= 600)
         {
-            WarningText = "10 MINUTES REMAINING";
-            WarningColor = "#F59E0B";
+            SessionAlertText = "10 minutes remaining";
+            SessionAlertColor = "#FBBF24";
+            TimerColor = "#34D399";
         }
         else
         {
-            WarningText = "";
-            WarningColor = "#10B981";
+            SessionAlertText = "";
+            SessionAlertColor = "#34D399";
+            TimerColor = "#34D399";
         }
 
         if (_remainingSeconds == 0)
         {
             SessionActive = false;
-            WarningText = "SESSION ENDED";
+            SessionAlertText = "Session ended";
+            SessionAlertColor = "#F87171";
+            TimerColor = "#8FA396";
             CurrentView = Games;
         }
     }
@@ -243,28 +320,29 @@ public sealed class MainViewModel : ObservableObject
                     {
                         var state = push.Data.TryGetProperty("state", out var st) ? st.GetString() : null;
                         SessionActive = state == "active";
-                        if (!SessionActive)
+                        var remaining = SessionActive && push.Data.TryGetProperty("remaining_seconds", out var rem)
+                            ? rem.GetInt64()
+                            : 0L;
+                        if (push.Data.TryGetProperty("remaining_seconds", out var remProp))
+                        {
+                            _remainingSeconds = remProp.GetInt64();
+                        }
+                        else if (!SessionActive)
                         {
                             _remainingSeconds = 0;
-                            UpdateCountdownUi();
                         }
+
+                        var expiresAt = push.Data.TryGetProperty("expires_at", out var exp)
+                            ? exp.GetString()
+                            : null;
+                        ApplySessionInfo(expiresAt, remaining);
+                        UpdateCountdownUi();
                         break;
                     }
 
                 case "games":
                     {
-                        var list = new List<GameTileVm>();
-                        if (push.Data.TryGetProperty("items", out var items))
-                        {
-                            foreach (var item in items.EnumerateArray())
-                            {
-                                list.Add(new GameTileVm(
-                                    item.TryGetProperty("game_id", out var gid) ? gid.GetString() ?? "" : "",
-                                    item.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
-                                    item.TryGetProperty("executable_path", out var ep) ? ep.GetString() ?? "" : "",
-                                    item.TryGetProperty("launch_args", out var la) ? la.GetString() ?? "" : ""));
-                            }
-                        }
+                        var list = ParseGameTiles(push.Data);
                         if (list.Count > 0) Games.ReplaceAll(list);
                         break;
                     }
@@ -283,22 +361,24 @@ public sealed class MainViewModel : ObservableObject
         var bootstrap = await _ipc.SendRequestAsync(IpcProtocol.MethodBootstrap, null);
         if (bootstrap is null)
         {
+            AgentConnected = false;
+            AgentStatusText = "Agent offline — showing demo library";
             SimpleFileLogger.Info("agent unreachable — using sample data");
             Games.ReplaceAll(new List<GameTileVm>
             {
-                new("g1", "CS2", "C:\\Games\\cs2.exe", ""),
-                new("g2", "VALORANT", "C:\\Riot\\VALORANT.exe", ""),
-                new("g3", "GTA V", "C:\\Games\\GTA5.exe", ""),
-                new("g4", "FIFA 24", "C:\\Games\\FIFA24.exe", ""),
-                new("g5", "FORTNITE", "C:\\Games\\Fortnite.exe", ""),
-                new("g6", "APEX", "C:\\Games\\Apex.exe", ""),
+                new("g1", "CS2", "C:\\Games\\cs2.exe", "", GameCoverLoader.DemoCoverUrl("cs2"), "FPS"),
+                new("g2", "VALORANT", "C:\\Riot\\VALORANT.exe", "", GameCoverLoader.DemoCoverUrl("valorant"), "FPS"),
+                new("g3", "GTA V", "C:\\Games\\GTA5.exe", "", GameCoverLoader.DemoCoverUrl("gtav"), "Open World"),
+                new("g4", "FIFA 24", "C:\\Games\\FIFA24.exe", "", GameCoverLoader.DemoCoverUrl("fifa24"), "Sports"),
+                new("g5", "FORTNITE", "C:\\Games\\Fortnite.exe", "", GameCoverLoader.DemoCoverUrl("fortnite"), "Battle Royale"),
+                new("g6", "APEX", "C:\\Games\\Apex.exe", "", GameCoverLoader.DemoCoverUrl("apex"), "Battle Royale"),
             });
             return;
         }
 
         if (bootstrap.Value.TryGetProperty("pc_id", out var pcIdEl))
         {
-            PcName = pcIdEl.GetString() ?? "PC";
+            PcName = FormatPcLabel(pcIdEl.GetString());
         }
 
         // Authoritative session state at connect time (covers reboots).
@@ -309,15 +389,49 @@ public sealed class MainViewModel : ObservableObject
             var remaining = sessionEl.TryGetProperty("remaining_seconds", out var rem)
                 ? rem.GetInt64()
                 : -1;
+            var expiresAt = sessionEl.TryGetProperty("expires_at", out var exp) ? exp.GetString() : null;
 
             if (state == "active" && remaining >= 0)
             {
                 SessionActive = true;
                 _remainingSeconds = remaining;
+                ApplySessionInfo(expiresAt, remaining);
                 UpdateCountdownUi();
                 SimpleFileLogger.Info($"bootstrap session active: {remaining}s remaining");
             }
         }
+
+        AgentStatusText = "Connected — session sync active";
+
+        if (bootstrap.Value.TryGetProperty("games", out var gamesEl) && gamesEl.ValueKind == JsonValueKind.Array)
+        {
+            var tiles = gamesEl.EnumerateArray()
+                .Select(ParseGameTile)
+                .Where(g => g is not null)
+                .Cast<GameTileVm>()
+                .ToList();
+            if (tiles.Count > 0) Games.ReplaceAll(tiles);
+        }
+    }
+
+    private static List<GameTileVm> ParseGameTiles(JsonElement data)
+    {
+        if (!data.TryGetProperty("items", out var items)) return [];
+        return items.EnumerateArray().Select(ParseGameTile).Where(g => g is not null).Cast<GameTileVm>().ToList();
+    }
+
+    private static GameTileVm? ParseGameTile(JsonElement item)
+    {
+        var exe = item.TryGetProperty("executable_path", out var ep) ? ep.GetString() : null;
+        if (string.IsNullOrWhiteSpace(exe)) return null;
+
+        return new GameTileVm(
+            item.TryGetProperty("game_id", out var gid) ? gid.GetString() ?? "" : "",
+            item.TryGetProperty("name", out var n) ? n.GetString() ?? "Game" : "Game",
+            exe,
+            item.TryGetProperty("launch_args", out var la) ? la.GetString() ?? "" : "",
+            item.TryGetProperty("icon_url", out var iu) ? iu.GetString() : null,
+            item.TryGetProperty("category", out var cat) ? cat.GetString() : null);
     }
 }
 
@@ -340,7 +454,11 @@ public sealed class GamesViewModel : ObservableObject
     public void ReplaceAll(IEnumerable<GameTileVm> games)
     {
         Items.Clear();
-        foreach (var g in games) Items.Add(g);
+        games.ToList().ForEach(g =>
+        {
+            Items.Add(g);
+            g.LoadCoverAsync();
+        });
     }
 }
 
@@ -399,6 +517,8 @@ public sealed class FoodViewModel : ObservableObject
 
     public string TotalText => $"₹{TotalPaise / 100.0:0.00}";
 
+    public bool HasCartItems => Cart.Count > 0;
+
     public void OnOrderPlaced(bool success)
     {
         StatusText = success ? "Order placed! It will be delivered to your PC." : "Order failed — please ask staff.";
@@ -411,9 +531,10 @@ public sealed class FoodViewModel : ObservableObject
 
     private void RefreshTotals()
     {
-        foreach (var line in Cart) line.Refresh();
+        Cart.ToList().ForEach(line => line.Refresh());
         OnPropertyChanged(nameof(TotalPaise));
         OnPropertyChanged(nameof(TotalText));
+        OnPropertyChanged(nameof(HasCartItems));
     }
 
     public sealed class MenuItemVm(string id, string name, int unitPricePaise)
@@ -454,9 +575,13 @@ public sealed class FoodViewModel : ObservableObject
 
 public sealed class SessionInfoViewModel : ObservableObject
 {
-    public string PcName { get; set; } = "—";
-    public string StartedAt { get; set; } = "—";
-    public string ExpiresAt { get; set; } = "—";
+    private string _pcName = "—";
+    private string _startedAt = "—";
+    private string _expiresAt = "—";
+
+    public string PcName { get => _pcName; set => Set(ref _pcName, value); }
+    public string StartedAt { get => _startedAt; set => Set(ref _startedAt, value); }
+    public string ExpiresAt { get => _expiresAt; set => Set(ref _expiresAt, value); }
 }
 
 public sealed class SuperadminViewModel : ObservableObject

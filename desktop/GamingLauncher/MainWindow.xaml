@@ -3,12 +3,14 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:GamingLauncher.ViewModels"
         xmlns:views="clr-namespace:GamingLauncher.Views"
-        Title="Gaming Zone"
+        xmlns:controls="clr-namespace:GamingLauncher.Controls"
+        Title="PACMAN Gaming Cafe"
         WindowStyle="None"
         ResizeMode="NoResize"
         WindowState="Maximized"
         ShowInTaskbar="False"
-        Background="#0B0F0E">
+        Background="{StaticResource Brush.Surface}"
+        FontFamily="{StaticResource Font.Ui}">
 
     <Window.InputBindings>
         <KeyBinding Modifiers="Control+Shift" Key="S" Command="{Binding OpenSuperadminCommand}" />
@@ -24,81 +26,235 @@
         <DataTemplate DataType="{x:Type vm:SessionInfoViewModel}">
             <views:SessionInfoView />
         </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:GamingModeViewModel}">
+            <views:GamingModeView />
+        </DataTemplate>
     </Window.Resources>
 
     <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
+        <!-- Arcade atmosphere -->
+        <Rectangle IsHitTestVisible="False">
+            <Rectangle.Fill>
+                <RadialGradientBrush Center="0.12,0.0" GradientOrigin="0.12,0.0" RadiusX="0.9" RadiusY="0.8">
+                    <GradientStop Color="{StaticResource Color.AmbientTop}" Offset="0" />
+                    <GradientStop Color="{StaticResource Brush.Surface}" Offset="0.55" />
+                    <GradientStop Color="{StaticResource Brush.Surface}" Offset="1" />
+                </RadialGradientBrush>
+            </Rectangle.Fill>
+        </Rectangle>
+        <Rectangle IsHitTestVisible="False" HorizontalAlignment="Right" Width="520" Opacity="0.35">
+            <Rectangle.Fill>
+                <RadialGradientBrush Center="1,0.2" GradientOrigin="1,0.2" RadiusX="0.8" RadiusY="0.7">
+                    <GradientStop Color="{StaticResource Color.AmbientSide}" Offset="0" />
+                    <GradientStop Color="#00000000" Offset="1" />
+                </RadialGradientBrush>
+            </Rectangle.Fill>
+        </Rectangle>
+        <Rectangle IsHitTestVisible="False" Opacity="0.35">
+            <Rectangle.Fill>
+                <DrawingBrush TileMode="Tile" Viewport="0,0,48,48" ViewportUnits="Absolute">
+                    <DrawingBrush.Drawing>
+                        <GeometryDrawing>
+                            <GeometryDrawing.Geometry>
+                                <RectangleGeometry Rect="0,0,48,48" />
+                            </GeometryDrawing.Geometry>
+                            <GeometryDrawing.Pen>
+                                <Pen Brush="{StaticResource Brush.GridLine}" Thickness="1" />
+                            </GeometryDrawing.Pen>
+                        </GeometryDrawing>
+                    </DrawingBrush.Drawing>
+                </DrawingBrush>
+            </Rectangle.Fill>
+        </Rectangle>
 
-        <!-- Session bar -->
-        <Border Grid.Row="0" Background="#111827" Padding="24,14">
-            <Grid>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding PcName}" Foreground="#9CA3AF" FontSize="18"
-                               VerticalAlignment="Center" Margin="0,0,24,0" />
-                    <Button Content="ORDER FOOD" Command="{Binding OpenFoodCommand}"
-                            Background="#1F2937" Foreground="#F9FAFB" FontSize="16" Padding="18,8"
-                            BorderThickness="0" Cursor="Hand" />
-                    <Button Content="SESSION INFO" Command="{Binding OpenSessionInfoCommand}"
-                            Background="#1F2937" Foreground="#F9FAFB" FontSize="16" Padding="18,8"
-                            BorderThickness="0" Cursor="Hand" Margin="12,0,0,0" />
-                </StackPanel>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-                <TextBlock Text="{Binding RemainingText}" Foreground="#10B981"
-                           FontSize="30" FontWeight="Bold" HorizontalAlignment="Right"
-                           VerticalAlignment="Center" FontFamily="Consolas" />
-            </Grid>
-        </Border>
+            <!-- Header -->
+            <Border Grid.Row="0" Background="{StaticResource Brush.SurfaceRaised}"
+                    BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"
+                    Padding="28,14">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-        <!-- Main content -->
-        <ContentControl Grid.Row="1" Content="{Binding CurrentView}" />
-
-        <!-- Warning banner -->
-        <Border Grid.Row="1" VerticalAlignment="Top" Margin="0,8,0,0"
-                Visibility="{Binding WarningText, Converter={StaticResource StringToVisibility}}"
-                Background="#7F111827" Padding="20,10" HorizontalAlignment="Center"
-                CornerRadius="6">
-            <TextBlock Text="{Binding WarningText}" Foreground="{Binding WarningColor}"
-                       FontSize="22" FontWeight="SemiBold" />
-        </Border>
-
-        <!-- Superadmin overlay -->
-        <Grid Visibility="{Binding Superadmin.IsVisible, Converter={StaticResource BoolToVisibility}}">
-            <Rectangle Fill="#CC000000" />
-            <Border Width="460" Padding="32" Background="#111827" CornerRadius="10"
-                    VerticalAlignment="Center" HorizontalAlignment="Center">
-                <StackPanel>
-                    <TextBlock Text="SUPERADMIN ACCESS" Foreground="#F9FAFB" FontSize="22"
-                               FontWeight="Bold" Margin="0,0,0,18" />
-
-                    <TextBlock Text="Password:" Foreground="#9CA3AF" FontSize="15" Margin="0,0,0,6" />
-                    <PasswordBox x:Name="SuperadminPasswordBox" FontSize="18" Padding="10,8"
-                                 Background="#0B0F0E" Foreground="#F9FAFB" BorderBrush="#374151" />
-
-                    <TextBlock Text="{Binding Superadmin.ErrorMessage}" Foreground="#EF4444"
-                               FontSize="14" Margin="0,10,0,0" TextWrapping="Wrap" />
-
-                    <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
-                        <Button Content="ENTER" Background="#10B981" Foreground="#06281F"
-                                FontSize="16" FontWeight="SemiBold" Padding="26,10" BorderThickness="0"
-                                Cursor="Hand" Click="SuperadminEnter_Click" />
-                        <Button Content="CANCEL" Background="#374151" Foreground="#F9FAFB"
-                                FontSize="16" Padding="26,10" BorderThickness="0" Margin="12,0,0,0"
-                                Command="{Binding Superadmin.CancelCommand}" Cursor="Hand" />
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="▶" Foreground="{StaticResource Brush.AccentSecondary}"
+                                   FontSize="20" FontWeight="Bold" Margin="0,0,10,0" />
+                        <TextBlock Text="PACMAN" FontFamily="{StaticResource Font.Display}"
+                                   FontSize="22" FontWeight="Bold"
+                                   Foreground="{StaticResource Brush.Accent}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="GAMING CAFE" FontFamily="{StaticResource Font.Display}"
+                                   FontSize="14" FontWeight="SemiBold"
+                                   Foreground="{StaticResource Brush.TextMuted}"
+                                   VerticalAlignment="Center" Margin="8,0,0,0" />
+                        <Border Background="{StaticResource Brush.AccentMuted}"
+                                BorderBrush="{StaticResource Brush.AccentStrong}"
+                                BorderThickness="1" CornerRadius="8" Padding="10,5" Margin="14,0,0,0">
+                            <TextBlock Text="{Binding PcName}" Foreground="{StaticResource Brush.Accent}"
+                                       FontSize="12" FontWeight="Bold" />
+                        </Border>
                     </StackPanel>
 
-                    <!-- Maintenance panel (after unlock) -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Button Content="🎮 Games" Command="{Binding OpenGamesCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource NavTabButton}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsGamesSelected}" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource Brush.AccentMuted}" />
+                                            <Setter Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="🍔 Food" Command="{Binding OpenFoodCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource NavTabButton}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsFoodSelected}" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource Brush.AccentMuted}" />
+                                            <Setter Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="⏱ Session" Command="{Binding OpenSessionInfoCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource NavTabButton}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsSessionInfoSelected}" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource Brush.AccentMuted}" />
+                                            <Setter Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </StackPanel>
+
+                    <Border Grid.Column="2" Background="{StaticResource Brush.Panel}"
+                            BorderBrush="{StaticResource Brush.BorderStrong}"
+                            BorderThickness="1" CornerRadius="12" Padding="16,10">
+                        <Border.Effect>
+                            <DropShadowEffect Color="#00D9FF" BlurRadius="18" ShadowDepth="0" Opacity="0.25" />
+                        </Border.Effect>
+                        <StackPanel>
+                            <TextBlock Text="SESSION TIME" FontSize="10" FontWeight="Bold"
+                                       Foreground="{StaticResource Brush.TextFaint}"
+                                       HorizontalAlignment="Right" />
+                            <TextBlock Text="{Binding RemainingText}"
+                                       FontFamily="{StaticResource Font.Mono}"
+                                       FontSize="32" FontWeight="Bold"
+                                       Foreground="{Binding TimerColor}"
+                                       HorizontalAlignment="Right" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="1">
+                <controls:CrossfadeContentControl Content="{Binding CurrentView}"
+                                                    ContentKey="{Binding ContentSwitchKey}" />
+
+                <Border VerticalAlignment="Top" Margin="0,16,0,0"
+                        Visibility="{Binding SessionAlertText, Converter={StaticResource StringToVisibility}}"
+                        Background="{StaticResource Brush.Panel}"
+                        BorderBrush="{StaticResource Brush.AccentSecondary}"
+                        BorderThickness="1"
+                        CornerRadius="12" Padding="22,12"
+                        HorizontalAlignment="Center">
+                    <Border.Effect>
+                        <DropShadowEffect Color="#FF4D9D" BlurRadius="16" ShadowDepth="0" Opacity="0.35" />
+                    </Border.Effect>
+                    <TextBlock Text="{Binding SessionAlertText}"
+                               Foreground="{Binding SessionAlertColor}"
+                               FontSize="17" FontWeight="Bold" />
+                </Border>
+            </Grid>
+
+            <Border Grid.Row="2" Background="{StaticResource Brush.SurfaceRaised}"
+                    BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0"
+                    Padding="28,10">
+                <Grid>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Width="8" Height="8" Margin="0,0,10,0">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{StaticResource Brush.Danger}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding AgentConnected}" Value="True">
+                                            <Setter Property="Fill" Value="{StaticResource Brush.AccentStrong}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="{Binding AgentStatusText}"
+                                   Foreground="{StaticResource Brush.TextMuted}" FontSize="13" />
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Button Content="{Binding ThemeToggleLabel}" Command="{Binding ToggleThemeCommand}"
+                                Style="{StaticResource SecondaryButton}" Padding="14,8" Margin="0,0,16,0" />
+                        <TextBlock Text="Ctrl+Shift+S · staff"
+                                   Foreground="{StaticResource Brush.TextFaint}" FontSize="12" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Visibility="{Binding Superadmin.IsVisible, Converter={StaticResource BoolToVisibility}}">
+            <Rectangle Fill="{StaticResource Brush.Overlay}" />
+            <Border Width="480" Padding="32" Style="{StaticResource PanelCard}"
+                    VerticalAlignment="Center" HorizontalAlignment="Center">
+                <StackPanel>
+                    <TextBlock Text="Staff access" FontFamily="{StaticResource Font.Display}"
+                               Foreground="{StaticResource Brush.Text}" FontSize="26"
+                               FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Maintenance actions are logged."
+                               Foreground="{StaticResource Brush.TextMuted}" FontSize="14"
+                               Margin="0,0,0,20" />
+
+                    <TextBlock Text="Password" Foreground="{StaticResource Brush.TextMuted}"
+                               FontSize="13" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <PasswordBox x:Name="SuperadminPasswordBox" FontSize="16" Padding="12,10"
+                                 Background="{StaticResource Brush.Surface}"
+                                 Foreground="{StaticResource Brush.Text}"
+                                 BorderBrush="{StaticResource Brush.Border}" />
+
+                    <TextBlock Text="{Binding Superadmin.ErrorMessage}" Foreground="{StaticResource Brush.Danger}"
+                               FontSize="14" Margin="0,12,0,0" TextWrapping="Wrap" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,20,0,0">
+                        <Button Content="Unlock" Style="{StaticResource PrimaryButton}"
+                                Click="SuperadminEnter_Click" />
+                        <Button Content="Cancel" Style="{StaticResource SecondaryButton}"
+                                Command="{Binding Superadmin.CancelCommand}" Margin="12,0,0,0" />
+                    </StackPanel>
+
                     <StackPanel Visibility="{Binding Superadmin.Unlocked, Converter={StaticResource BoolToVisibility}}"
-                                Margin="0,20,0,0">
-                        <Button Content="ENTER WINDOWS" Command="{Binding Superadmin.EnterWindowsCommand}"
+                                Margin="0,24,0,0">
+                        <TextBlock Text="Maintenance" Foreground="{StaticResource Brush.TextFaint}"
+                                   FontSize="11" FontWeight="SemiBold" Margin="0,0,0,8" />
+                        <Button Content="Enter Windows desktop" Command="{Binding Superadmin.EnterWindowsCommand}"
                                 Style="{StaticResource MaintenanceButton}" />
-                        <Button Content="RESTART PC" Command="{Binding Superadmin.RestartCommand}"
+                        <Button Content="Restart PC" Command="{Binding Superadmin.RestartCommand}"
                                 Style="{StaticResource MaintenanceButton}" />
-                        <Button Content="SHUTDOWN PC" Command="{Binding Superadmin.ShutdownCommand}"
+                        <Button Content="Shutdown PC" Command="{Binding Superadmin.ShutdownCommand}"
                                 Style="{StaticResource MaintenanceButton}" />
-                        <Button Content="EXIT SUPERADMIN" Command="{Binding Superadmin.ExitSuperadminCommand}"
+                        <Button Content="Close panel" Command="{Binding Superadmin.ExitSuperadminCommand}"
                                 Style="{StaticResource MaintenanceButton}" />
                     </StackPanel>
                 </StackPanel>

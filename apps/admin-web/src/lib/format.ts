@@ -1,7 +1,4 @@
-export function formatMoney(minorUnits: number): string {
-  const sign = minorUnits < 0 ? "-" : "";
-  return `${sign}₹${(Math.abs(minorUnits) / 100).toFixed(2)}`;
-}
+export { formatPaise as formatMoney } from "@gaming-cafe/shared";
 
 export function formatCountdown(msRemaining: number | null): string {
   if (msRemaining === null) return "--:--";
