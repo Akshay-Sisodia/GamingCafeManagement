@@ -57,7 +57,7 @@ async function streamEvents(
     "cache-control": "no-cache, no-transform",
     connection: "keep-alive",
     "x-accel-buffering": "no",
-    ...corsHeadersFor(req.headers.origin),
+    ...corsHeadersFor(typeof req.headers.origin === "string" ? req.headers.origin : undefined),
   });
   res.write("retry: 3000\n\n");
 
