@@ -65,24 +65,26 @@ dotnet build desktop/PcAgent.sln -c Release
 
 > **Troubleshooting (this machine):** a global `MSBuildSDKsPath` env var points at an old scoop SDK 9. If `dotnet build` fails with NETSDK1045, clear it first: `$env:MSBuildSDKsPath = $null; $env:DOTNET_ROOT = "C:\Program Files\dotnet"`.
 
-## Deployment (Render + hosted data)
+## Deployment (Render free tier + hosted data)
 
-The repo ships a [render.yaml](render.yaml) Blueprint: **gcm-api** (web service) + **gcm-worker** (background worker). Postgres and Redis are hosted externally.
+Single **free** Render web service runs api + workers in one process (`SINGLE_PROCESS=true`), so 750 free instance-hours cover 24/7. Postgres and Redis are hosted externally.
 
 1. Provision hosted data:
    - **Postgres** — [Neon](https://neon.tech) (free tier): copy the connection string, keep `?sslmode=require`
    - **Redis** — [Upstash](https://upstash.com) or [Redis Cloud](https://redis.com/cloud) (free tiers): copy the `redis://` / `rediss://` endpoint (TLS auto-detected)
 2. Render Dashboard → **New → Blueprint** → select this repo.
-3. When prompted, paste `DATABASE_URL`, `REDIS_URL`, and the same strong `JWT_SECRET` for both services.
+3. When prompted, paste `DATABASE_URL`, `REDIS_URL`, and a strong `JWT_SECRET` (`openssl rand -hex 32`).
 4. First deploy runs `db:push` automatically (schema sync). Seed once via a Render Shell on `gcm-api`:
    ```bash
    pnpm --filter server db:seed
    ```
-5. Point PC agents at `https://gcm-api.onrender.com` (ServerBaseUrl).
+5. **Keep-alive**: create a free cron at [cron-job.org](https://cron-job.org) or UptimeRobot hitting `https://<your-app>.onrender.com/healthz` every 10 minutes — prevents the 15-min idle spin-down.
+6. Point PC agents at `https://gcm-api.onrender.com` (ServerBaseUrl).
 
 Provider notes:
 - Neon: use the **direct** (non-pooled) string for these long-lived services; pooled is for serverless.
 - Upstash free tier limits concurrent connections — BullMQ uses blocking connections, so prefer Redis Cloud free (30 MB) if you hit limits.
+- Free-tier reality: occasional Render restarts drop SSE connections; agents reconnect automatically (offline-first design), and sessions survive any backend downtime.
 
 Local container check:
 

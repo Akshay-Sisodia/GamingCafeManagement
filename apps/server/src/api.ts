@@ -66,4 +66,12 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       app.log.error(err);
       process.exit(1);
     });
+
+  // Single-service deployments (e.g. Koyeb free tier): run BullMQ workers
+  // in-process instead of a separate worker deployable.
+  if (config.SINGLE_PROCESS) {
+    const { startWorker } = await import("./worker.js");
+    await startWorker();
+    app.log.info("single-process mode: workers started alongside api");
+  }
 }

@@ -1,46 +1,33 @@
-# Render Blueprint — deploys gcm-api (web service) + gcm-worker (background worker).
-# Postgres and Redis are HOSTED externally (Neon / Upstash / Redis Cloud etc.) —
-# paste their connection strings when Render prompts at deploy time.
+# Render Blueprint — FREE tier deployment (single service).
+#
+# Runs api + BullMQ workers in ONE process (SINGLE_PROCESS=true) so the whole
+# backend fits inside Render's 750 free instance-hours.
+#
+# Data services are hosted externally (Neon / Upstash / Redis Cloud) — paste
+# their connection strings when Render prompts at deploy time.
+#
+# Keep-alive: pair with a free cron pinging /healthz every 10 minutes
+# (cron-job.org or UptimeRobot) to defeat the 15-min idle spin-down.
 #
 # Deploy: Render Dashboard → New → Blueprint → point at this repo.
-#
-# Docs: https://render.com/docs/blueprint-spec
 
 services:
-  # ---- API (REST + SSE) -------------------------------------------------------
   - type: web
     name: gcm-api
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /healthz
     autoDeploy: true
     preDeployCommand: pnpm --filter server db:push
     envVars:
+      - key: SINGLE_PROCESS
+        value: "true" # api + workers in one process (free-tier friendly)
       - key: DATABASE_URL
         sync: false # e.g. postgres://…@ep-xxx.neon.tech/gamingcafe?sslmode=require
       - key: REDIS_URL
-        sync: false # e.g. redis://…  or  rediss://… (TLS auto-detected)
+        sync: false # redis://… or rediss://… (TLS auto-detected)
       - key: JWT_SECRET
-        sync: false # set the SAME strong secret on gcm-api and gcm-worker
-      - key: NODE_ENV
-        value: production
-      - key: LOG_LEVEL
-        value: info
-
-  # ---- Worker (BullMQ consumers: command expiry, session sweeps) ---------------
-  - type: worker
-    name: gcm-worker
-    runtime: docker
-    plan: starter
-    dockerCommand: ["pnpm", "--filter", "worker", "start"]
-    autoDeploy: true
-    envVars:
-      - key: DATABASE_URL
-        sync: false # same value as gcm-api
-      - key: REDIS_URL
-        sync: false # same value as gcm-api
-      - key: JWT_SECRET
-        sync: false # same value as gcm-api
+        sync: false # strong random value, e.g. openssl rand -hex 32
       - key: NODE_ENV
         value: production
       - key: LOG_LEVEL

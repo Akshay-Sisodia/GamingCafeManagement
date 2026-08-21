@@ -10,6 +10,9 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
+  // Run BullMQ workers inside the api process (single-service platforms like
+  // Koyeb's free tier). Keep false in multi-service deployments.
+  SINGLE_PROCESS: z.coerce.boolean().default(false),
 });
 
 const parsed = envSchema.parse(process.env);
@@ -20,6 +23,7 @@ export const config = {
   JWT_SECRET: parsed.JWT_SECRET,
   PORT: parsed.PORT,
   LOG_LEVEL: parsed.LOG_LEVEL,
+  SINGLE_PROCESS: parsed.SINGLE_PROCESS,
 } as const;
 
 export type Config = typeof config;
