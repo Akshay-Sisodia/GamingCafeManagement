@@ -20,7 +20,7 @@ export function LoginPage() {
         method: "POST",
         body: { email, password },
       });
-      auth.signIn(res.access_token, res.user);
+      auth.signIn(res.access_token, res.user, res.refresh_token);
       // Role-based landing: kitchen accounts go straight to the order board.
       navigate(res.user.role === "kitchen" ? "/kitchen" : "/", { replace: true });
     } catch (err) {
