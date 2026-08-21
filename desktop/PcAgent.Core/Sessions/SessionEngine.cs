@@ -91,7 +91,9 @@ public sealed class SessionEngine
             throw new InvalidOperationException("A session is already active on this PC");
         }
 
-        var localRef = $"ls-{Uuid7.NewId()[..8]}";
+        // Random-suffix segment (NOT the timestamp prefix — two ids created in
+        // the same millisecond would collide on the unique local_ref).
+        var localRef = $"ls-{Convert.ToHexString(Uuid7.NewGuid().ToByteArray())[^8..].ToLowerInvariant()}";
         var startMs = _clock.EffectiveNowMs();
         var expiresMs = startMs + plannedMinutes * 60_000L;
 

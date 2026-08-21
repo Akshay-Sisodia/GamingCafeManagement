@@ -89,6 +89,9 @@ public sealed class AgentWorker : BackgroundService
         _sessions.Expired += OnSessionExpired;
         _sessions.WarningRaised += w =>
             _logger.LogWarning("session warning: {Sec}s remaining", w.RemainingSeconds);
+        // Crash/reboot recovery: resume or expire any session found on disk
+        // BEFORE the SSE loop starts adopting cloud state.
+        _sessions.RecoverOnBoot();
 
         _superadmin = new SuperadminService(
             _db,
@@ -299,7 +302,24 @@ public sealed class AgentWorker : BackgroundService
         _sse.Start();
     }
 
+    private readonly SemaphoreSlim _sseEventGate = new(1, 1);
+
     private void HandleSseEvent(SseEvent ev)
+    {
+        // Serialize event application — concurrent deliveries (reconnect
+        // replay + live push) must not race the local session store.
+        _sseEventGate.Wait();
+        try
+        {
+            ApplySseEvent(ev);
+        }
+        finally
+        {
+            _sseEventGate.Release();
+        }
+    }
+
+    private void ApplySseEvent(SseEvent ev)
     {
         switch (ev.EventName)
         {
