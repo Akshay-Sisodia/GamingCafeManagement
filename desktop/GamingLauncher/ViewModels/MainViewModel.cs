@@ -124,9 +124,10 @@ public sealed class MainViewModel : ObservableObject
 
     private void OnTick()
     {
-        // Self-healing: if pushes stopped arriving (pipe hiccup), resync.
-        if (SessionActive && !_resyncInFlight &&
-            (DateTime.UtcNow - _lastTimerPushUtc).TotalSeconds > 10)
+        // Unconditional 10s resync — the launcher never depends solely on
+        // pushes for correctness; pushes are an optimization over this poll.
+        if (!_resyncInFlight && _ipc.IsConnected &&
+            (DateTime.UtcNow - _lastResyncUtc).TotalSeconds >= 10)
         {
             _resyncInFlight = true;
             _ = ResyncAsync();
@@ -173,6 +174,7 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             _resyncInFlight = false;
+        _lastResyncUtc = DateTime.UtcNow;
             _lastTimerPushUtc = DateTime.UtcNow; // give the stream 10s grace
         }
     }
@@ -180,6 +182,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _timerPushLogged;
     private bool _resyncInFlight;
     private DateTime _lastTimerPushUtc = DateTime.UtcNow;
+    private DateTime _lastResyncUtc = DateTime.UtcNow;
 
     private void UpdateCountdownUi()
     {
@@ -293,9 +296,27 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        if (bootstrap.Value.TryGetProperty("pc_id", out var pcId))
+        if (bootstrap.Value.TryGetProperty("pc_id", out var pcIdEl))
         {
-            PcName = pcId.GetString() ?? "PC";
+            PcName = pcIdEl.GetString() ?? "PC";
+        }
+
+        // Authoritative session state at connect time (covers reboots).
+        if (bootstrap.Value.TryGetProperty("session", out var sessionEl) &&
+            sessionEl.ValueKind == JsonValueKind.Object)
+        {
+            var state = sessionEl.TryGetProperty("state", out var st) ? st.GetString() : null;
+            var remaining = sessionEl.TryGetProperty("remaining_seconds", out var rem)
+                ? rem.GetInt64()
+                : -1;
+
+            if (state == "active" && remaining >= 0)
+            {
+                SessionActive = true;
+                _remainingSeconds = remaining;
+                UpdateCountdownUi();
+                SimpleFileLogger.Info($"bootstrap session active: {remaining}s remaining");
+            }
         }
     }
 }
