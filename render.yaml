@@ -20,10 +20,7 @@ services:
     autoDeploy: true
     # Free tier has no preDeployCommand support — sync schema on boot instead
     # (--force skips interactive prompts; push is idempotent).
-    dockerCommand:
-      - sh
-      - -c
-      - pnpm --filter server db:push --force && pnpm --filter server start
+    dockerCommand: sh -c "pnpm --filter server db:push --force && pnpm --filter server start"
     envVars:
       - key: SINGLE_PROCESS
         value: "true" # api + workers in one process (free-tier friendly)
