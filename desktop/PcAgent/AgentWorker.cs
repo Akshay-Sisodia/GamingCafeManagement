@@ -45,6 +45,7 @@ public sealed class AgentWorker : BackgroundService
     private string? _deviceToken;
     private string? _pcId;
     private bool _gamingMode;
+    private bool _timerPushLogged;
     private long _lastServerTimeMs;
     private CancellationTokenSource _lifetime = new();
 
@@ -142,12 +143,17 @@ public sealed class AgentWorker : BackgroundService
                 _sessions!.Tick();
 
                 // 1 Hz countdown push to the launcher (suppressed in gaming mode —
-                // the WebView/renderer must stay idle while a game runs).
+                // the renderer must stay idle while a game runs).
                 if (!_gamingMode && _ipc is not null &&
                     _sessions.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
                 {
                     await _ipc.PushAsync("timer", JsonSerializer.SerializeToElement(
                         new { remaining_seconds = _sessions.RemainingSeconds() }));
+                    if (!_timerPushLogged)
+                    {
+                        _timerPushLogged = true;
+                        _logger.LogInformation("timer stream active ({Sec}s remaining)", _sessions.RemainingSeconds());
+                    }
                 }
 
                 if (DateTimeOffset.UtcNow - lastTimeSync > TimeSpan.FromSeconds(_options.TimeSyncIntervalSeconds))
@@ -465,8 +471,7 @@ public sealed class AgentWorker : BackgroundService
     private void StartIpc()
     {
         _ipc = new IpcServer(async (req, ct) =>
-        {
-            switch (req.Method)
+        {            switch (req.Method)
             {
                 case "bootstrap":
                     return new Dictionary<string, object?>
@@ -548,6 +553,27 @@ public sealed class AgentWorker : BackgroundService
                     throw new ArgumentException($"unknown method {req.Method}");
             }
         }, msg => _logger.LogInformation("ipc: {Msg}", msg));
+
+        // When the launcher connects, immediately hand it full state — it
+        // shouldn't wait a second for the next timer tick to know anything.
+        _ipc.ClientConnected += async () =>
+        {
+            var active = _sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring;
+            await _ipc.PushAsync("session", JsonSerializer.SerializeToElement(new
+            {
+                state = active ? "active" : "none",
+                expires_at = active
+                    ? DateTimeOffset.FromUnixTimeMilliseconds(_sessions.ExpiresEffMs() ?? 0).ToString("O")
+                    : null,
+            }));
+            if (active)
+            {
+                await _ipc.PushAsync("timer", JsonSerializer.SerializeToElement(
+                    new { remaining_seconds = _sessions.RemainingSeconds() }));
+            }
+            _timerPushLogged = false;
+        };
+
         _ipc.Start();
     }
 

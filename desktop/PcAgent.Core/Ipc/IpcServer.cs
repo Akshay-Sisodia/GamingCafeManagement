@@ -18,7 +18,11 @@ public sealed class IpcServer
     private readonly Func<IpcRequest, CancellationToken, Task<object?>> _handler;
     private readonly Action<string> _log;
     private readonly CancellationTokenSource _cts = new();
+    private readonly SemaphoreSlim _writeGate = new(1, 1); // timer pushes vs responses
     private StreamWriter? _currentWriter;
+
+    /// <summary>Raised when a launcher connects — push initial state immediately.</summary>
+    public event Func<Task>? ClientConnected;
 
     /// <summary>Raised for pushes the launcher should receive (timer ticks etc.).</summary>
     public event Func<string, JsonElement?, Task>? PushRequested;
@@ -49,6 +53,10 @@ public sealed class IpcServer
 
                 await server.WaitForConnectionAsync(ct);
                 _log("launcher IPC connected");
+                if (ClientConnected is not null)
+                {
+                    try { await ClientConnected.Invoke(); } catch (Exception ex) { _log($"client-connected hook failed: {ex.Message}"); }
+                }
 
                 using (server)
                 using (var reader = new StreamReader(server, Encoding.UTF8, leaveOpen: true))
@@ -96,7 +104,21 @@ public sealed class IpcServer
     {
         var writer = _currentWriter;
         if (writer is null) return;
-        await writer.WriteLineAsync(json);
+        // Timer pushes (main loop) and request responses (IPC loop) share the
+        // pipe — without this gate their frames interleave and corrupt JSON.
+        await _writeGate.WaitAsync();
+        try
+        {
+            await writer.WriteLineAsync(json);
+        }
+        catch
+        {
+            // launcher not connected — fine
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
     }
 
     /// <summary>Pushes an event to the connected launcher, if any.</summary>
