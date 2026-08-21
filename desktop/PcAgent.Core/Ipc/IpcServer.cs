@@ -51,6 +51,7 @@ public sealed class IpcServer
             try
             {
                 await server.WaitForConnectionAsync(ct);
+                _log("pipe client accepted");
             }
             catch (OperationCanceledException) { server.Dispose(); break; }
             catch (Exception ex)
