@@ -31,16 +31,16 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       .orderBy(desc(customers.createdAt))
       .limit(200);
 
-    return {
-      customers: rows.map((c) => ({
-        id: c.id,
-        name: c.name,
-        email: c.email,
-        phone: c.phone,
-        status: c.status,
-        created_at: c.createdAt?.toISOString() ?? null,
-      })),
-    };
+    // Frontend contract (CustomerDto[]): bare array.
+    return rows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      email: c.email,
+      phone: c.phone,
+      wallet_balance: 0, // Phase 2: wallets
+      loyalty_points: 0, // Phase 2: loyalty
+      created_at: c.createdAt?.toISOString() ?? null,
+    }));
   });
 
   app.post("/customers", { preHandler: requireUser(["owner", "manager", "staff"]) }, async (req) => {

@@ -362,12 +362,17 @@ export async function registerSyncRoutes(app: FastifyInstance): Promise<void> {
         )
         .orderBy(desc(offlineEvents.receivedAt))
         .limit(200);
-      return {
-        conflicts: rows.map((r) => ({
-          ...r.event,
-          pc_name: r.pc_name,
-        })),
-      };
+      // Frontend contract (SyncConflictDto[]): bare array.
+      return rows.map((r) => ({
+        id: r.event.id,
+        event_id: r.event.id,
+        pc_id: r.event.pcId,
+        pc_name: r.pc_name,
+        event_type: r.event.type,
+        reason: r.event.conflictReason ?? "",
+        state: r.event.state,
+        occurred_at: r.event.occurredAt?.toISOString() ?? null,
+      }));
     },
   );
 

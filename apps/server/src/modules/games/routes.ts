@@ -45,8 +45,8 @@ export async function registerGameRoutes(app: FastifyInstance): Promise<void> {
             .groupBy(pcGameInstallations.gameId)
         : [];
 
-    return {
-      games: gameRows.map((g) => ({
+    // Frontend contract (GameDto[]): bare array (rich fields kept for the UI).
+    return gameRows.map((g) => ({
         id: g.id,
         name: g.name,
         platform: g.platform,
@@ -68,8 +68,7 @@ export async function registerGameRoutes(app: FastifyInstance): Promise<void> {
         installation_count: countRows
           .filter((c) => c.gameId === g.id)
           .reduce((sum, c) => sum + Number(c.count), 0),
-      })),
-    };
+      }));
   });
 
   app.post("/games", { preHandler: requireUser(["owner", "manager"]) }, async (req) => {
@@ -223,32 +222,31 @@ export async function registerGameRoutes(app: FastifyInstance): Promise<void> {
             .where(inArray(gameDeploymentTargets.deploymentId, jobIds))
         : [];
 
-    return {
-      deployments: jobRows.map((j) => ({
-        id: j.deployment.id,
-        game_id: j.deployment.gameId,
-        game_name: j.game_name,
-        target_version_id: j.deployment.targetVersionId,
-        master_pc_id: j.deployment.masterPcId,
-        policy: j.deployment.policy,
-        status: j.deployment.status,
-        created_by: j.deployment.createdBy,
-        created_at: j.deployment.createdAt.toISOString(),
-        targets: targetRows
-          .filter((t) => t.target.deploymentId === j.deployment.id)
-          .map((t) => ({
-            id: t.target.id,
-            pc_id: t.target.pcId,
-            pc_name: t.pc_name,
-            state: t.target.state,
-            progress_pct: t.target.progressPct,
-            bytes_transferred: t.target.bytesTransferred,
-            error: t.target.error,
-            started_at: t.target.startedAt ? t.target.startedAt.toISOString() : null,
-            finished_at: t.target.finishedAt ? t.target.finishedAt.toISOString() : null,
-          })),
-      })),
-    };
+    // Frontend contract (DeploymentDto[]): bare array.
+    return jobRows.map((j) => ({
+      id: j.deployment.id,
+      game_id: j.deployment.gameId,
+      game_name: j.game_name,
+      target_version_id: j.deployment.targetVersionId,
+      master_pc_id: j.deployment.masterPcId,
+      policy: j.deployment.policy,
+      status: j.deployment.status,
+      created_by: j.deployment.createdBy,
+      created_at: j.deployment.createdAt.toISOString(),
+      targets: targetRows
+        .filter((t) => t.target.deploymentId === j.deployment.id)
+        .map((t) => ({
+          id: t.target.id,
+          pc_id: t.target.pcId,
+          pc_name: t.pc_name,
+          state: t.target.state,
+          progress_pct: t.target.progressPct,
+          bytes_transferred: t.target.bytesTransferred,
+          error: t.target.error,
+          started_at: t.target.startedAt ? t.target.startedAt.toISOString() : null,
+          finished_at: t.target.finishedAt ? t.target.finishedAt.toISOString() : null,
+        })),
+    }));
   });
 
   app.post("/deployments", { preHandler: requireUser(["owner", "manager"]) }, async (req) => {

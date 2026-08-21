@@ -21,8 +21,8 @@ export async function registerMenuRoutes(app: FastifyInstance): Promise<void> {
       .where(and(eq(menuItems.cafeId, user.cafe_id), isNull(menuItems.deletedAt)))
       .orderBy(asc(menuItems.name));
 
-    return {
-      categories: categories.map((c) => ({
+    // Frontend contract (MenuCategoryDto[]): bare array.
+    return categories.map((c) => ({
         id: c.id,
         name: c.name,
         available: c.available,
@@ -36,8 +36,7 @@ export async function registerMenuRoutes(app: FastifyInstance): Promise<void> {
             available: i.available,
             prep_minutes: i.prepMinutes,
           })),
-      })),
-    };
+      }));
   });
 
   app.post(

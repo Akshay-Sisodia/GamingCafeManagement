@@ -132,6 +132,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
       .orderBy(desc(orders.placedAt))
       .limit(100);
     const itemsMap = await loadOrderItemsMap(rows.map((r) => r.id));
-    return { orders: rows.map((r) => toOrderDto(r, itemsMap.get(r.id) ?? [])) };
+    // Frontend contract (OrderDto[]): bare array.
+    return rows.map((r) => toOrderDto(r, itemsMap.get(r.id) ?? []));
   });
 }

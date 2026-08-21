@@ -29,21 +29,17 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
       .orderBy(desc(auditLogs.id))
       .limit(limit);
 
-    return {
-      audit_logs: rows.map((r) => ({
-        id: r.id,
-        event_id: r.eventId,
-        actor_type: r.actorType,
-        actor_id: r.actorId,
-        actor_role: r.actorRole,
-        action: r.action,
-        source: r.source,
-        pc_id: r.pcId,
-        entity_type: r.entityType,
-        entity_id: r.entityId,
-        metadata: r.metadata,
-        occurred_at: r.occurredAt?.toISOString() ?? null,
-      })),
-    };
+    // Frontend contract (AuditLogDto[]): bare array.
+    return rows.map((r) => ({
+      id: r.id,
+      at: r.occurredAt?.toISOString() ?? null,
+      actor_type: r.actorType,
+      actor_name: r.actorRole ? `${r.actorId} (${r.actorRole})` : r.actorId,
+      action: r.action,
+      target: r.entityType
+        ? `${r.entityType}${r.entityId ? `:${r.entityId.slice(0, 8)}` : ""}`
+        : null,
+      detail: r.metadata ? JSON.stringify(r.metadata) : null,
+    }));
   });
 }

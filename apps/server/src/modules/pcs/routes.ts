@@ -13,6 +13,8 @@ import {
   sessions,
   superadminVerifiers,
   gameVersions,
+  customers,
+  pcCommands,
 } from "../../db/schema.js";
 import { requireDevice, requireUser } from "../../auth/guards.js";
 import { parseBody, parseQuery, problem } from "../../lib/problem.js";
@@ -31,32 +33,47 @@ export async function registerPcRoutes(app: FastifyInstance): Promise<void> {
         tierName: pcTiers.name,
         activeSession: sql<
           | {
-              session_id: string;
-              status: string;
+              id: string;
+              customer_name: string | null;
+              started_at: string;
               expires_at: string;
-              customer_id: string | null;
+              planned_minutes: number;
             }
           | null
-        >`(select json_build_object('session_id', s.id, 'status', s.status, 'expires_at', s.expires_at, 'customer_id', s.customer_id)
-           from ${sessions} s where s.pc_id = ${pcs.id} and s.status in ('active','scheduled')
-           order by s.started_at desc limit 1)`,
+        >`(select json_build_object(
+                'id', s.id,
+                'customer_name', coalesce(c.name, null),
+                'started_at', s.started_at,
+                'expires_at', s.expires_at,
+                'planned_minutes', s.planned_minutes)
+           from ${sessions} s
+           left join ${customers} c on c.id = s.customer_id
+          where s.pc_id = ${pcs.id} and s.status in ('active','scheduled')
+          order by s.started_at desc limit 1)`,
       })
       .from(pcs)
       .leftJoin(pcTiers, eq(pcTiers.id, pcs.tierId))
       .where(eq(pcs.cafeId, user.cafe_id))
       .orderBy(pcs.name);
-    return {
-      pcs: rows.map((r) => ({
-        id: r.pc.id,
-        name: r.pc.name,
-        status: r.pc.status,
-        tier_id: r.pc.tierId,
-        tier_name: r.tierName,
-        agent_version: r.pc.agentVersion,
-        last_heartbeat_at: r.pc.lastHeartbeatAt ? r.pc.lastHeartbeatAt.toISOString() : null,
-        active_session: r.activeSession,
-      })),
-    };
+
+    // Frontend contract (PcDto[]): bare array with current_session summary.
+    return rows.map((r) => ({
+      id: r.pc.id,
+      name: r.pc.name,
+      status: r.pc.status,
+      tier_name: r.tierName ?? "Standard",
+      agent_version: r.pc.agentVersion ?? "",
+      current_session: r.activeSession
+        ? {
+            id: r.activeSession.id,
+            customer_name: r.activeSession.customer_name,
+            started_at: new Date(r.activeSession.started_at).toISOString(),
+            expires_at: new Date(r.activeSession.expires_at).toISOString(),
+            planned_minutes: r.activeSession.planned_minutes,
+            game_name: null,
+          }
+        : null,
+    }));
   });
 
   app.get("/pcs/:id", { preHandler: requireUser() }, async (req) => {
@@ -94,18 +111,57 @@ export async function registerPcRoutes(app: FastifyInstance): Promise<void> {
       .where(and(eq(sessions.pcId, id), eq(sessions.status, "active")))
       .limit(1);
 
+    const commandRows = await db
+      .select()
+      .from(pcCommands)
+      .where(eq(pcCommands.pcId, id))
+      .orderBy(desc(pcCommands.issuedAt))
+      .limit(20);
+
+    // Frontend contract (PcDetailDto).
     return {
-      pc: {
-        ...row.pc,
-        tier_name: row.tierName,
-      },
-      latest_health: healthRows[0] ?? null,
+      id: row.pc.id,
+      name: row.pc.name,
+      status: row.pc.status,
+      tier_name: row.tierName ?? "Standard",
+      agent_version: row.pc.agentVersion ?? "",
+      current_session: sessionRows[0]
+        ? {
+            id: sessionRows[0].id,
+            customer_name: null,
+            started_at: sessionRows[0].startedAt.toISOString(),
+            expires_at: sessionRows[0].expiresAt.toISOString(),
+            planned_minutes: sessionRows[0].plannedMinutes,
+            game_name: null,
+          }
+        : null,
+      health: healthRows[0]
+        ? {
+            cpu_pct: healthRows[0].cpuPct,
+            ram_pct: healthRows[0].ramPct,
+            gpu_pct: healthRows[0].gpuPct,
+            disk_pct: healthRows[0].diskPct,
+            disk_free_bytes: Number(healthRows[0].diskFreeBytes),
+            uptime_s: healthRows[0].uptimeS,
+            agent_status: healthRows[0].agentStatus,
+          }
+        : null,
       installations: installations.map((i) => ({
-        ...i.installation,
+        id: i.installation.id,
         game_name: i.game_name,
-        installed_version_label: i.version,
+        version_label: i.version ?? "—",
+        state: i.installation.state,
+        updated_at:
+          i.installation.lastVerifiedAt?.toISOString() ??
+          new Date(0).toISOString(),
       })),
-      active_session: sessionRows[0] ? toSessionDto(sessionRows[0]) : null,
+      commands: commandRows.map((c) => ({
+        id: c.id,
+        type: c.type,
+        payload: (c.payload ?? {}) as Record<string, unknown>,
+        status: c.status,
+        issued_at: c.issuedAt.toISOString(),
+      })),
     };
   });
 
