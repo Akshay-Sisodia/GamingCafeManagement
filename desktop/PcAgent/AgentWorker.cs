@@ -46,6 +46,7 @@ public sealed class AgentWorker : BackgroundService
     private string? _pcId;
     private bool _gamingMode;
     private long _lastServerTimeMs;
+    private CancellationTokenSource _lifetime = new();
 
     public AgentWorker(AgentOptions options, ILogger<AgentWorker> logger)
     {
@@ -55,6 +56,7 @@ public sealed class AgentWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _lifetime = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         Directory.CreateDirectory(_options.DataDirectory);
         var dbPath = Path.Combine(_options.DataDirectory, "agent.db");
         _db = new AgentDatabase(dbPath);
@@ -299,6 +301,18 @@ public sealed class AgentWorker : BackgroundService
         _sse.ConnectionChanged += connected =>
             _logger.LogInformation("SSE {State}", connected ? "connected" : "disconnected");
         _sse.AuthRejected += ClearIdentity;
+        _sse.ConnectionChanged += connected =>
+        {
+            if (connected)
+            {
+                // Refetch authoritative session on every (re)connect.
+                _ = Task.Run(async () =>
+                {
+                    try { await SyncFromBootstrapAsync(_lifetime.Token); }
+                    catch { /* logged inside */ }
+                });
+            }
+        };
         _sse.Start();
     }
 
@@ -355,43 +369,92 @@ public sealed class AgentWorker : BackgroundService
                         : (long?)null;
                     var status = doc.RootElement.TryGetProperty("status", out var s) ? s.GetString() : null;
 
-                    if (status == "active" && expiresAt is not null)
+                    if (expiresAt is not null && status is not null)
                     {
-                        // Cloud-originated change: adopt locally WITHOUT echoing
-                        // back into the outbox (server already knows).
-                        if (_sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
-                        {
-                            // Align expiry with the server (covers remote extends).
-                            var localRemaining = _sessions.RemainingSeconds();
-                            var serverRemaining = (int)Math.Max(0, (expiresAt.Value - _clock!.EffectiveNowMs()) / 1000);
-                            var deltaMinutes = (int)Math.Round((serverRemaining - localRemaining) / 60.0);
-                            if (deltaMinutes > 0)
-                            {
-                                _sessions.Extend(deltaMinutes, suppressOutboxEcho: true);
-                                _logger.LogInformation("adopted remote extension (+{Min}m)", deltaMinutes);
-                            }
-                        }
-                        else
-                        {
-                            var remainingMin = (int)Math.Max(1, (expiresAt.Value - _clock!.EffectiveNowMs()) / 60000);
-                            _sessions.StartSession(remainingMin, "admin", null, suppressOutboxEcho: true);
-                            _logger.LogInformation("adopted cloud session ({Min}m)", remainingMin);
-                        }
-                    }
-                    else if (status is "ended" or "cancelled" or "expired")
-                    {
-                        if (_sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
-                        {
-                            _sessions.End($"cloud_{status}", suppressOutboxEcho: true);
-                            _processes!.KillAllTracked();
-                            _gamingMode = false;
-                        }
+                        AdoptServerSessionState(status, expiresAt.Value);
                     }
                     break;
                 }
             default:
                 _logger.LogDebug("SSE event {Name} ignored", ev.EventName);
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Makes the local session agree with the server's view. Cloud-originated:
+    /// never echoes into the outbox (server already knows).
+    /// </summary>
+    private void AdoptServerSessionState(string status, long expiresEffMs)
+    {
+        if (status == "active")
+        {
+            if (_sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
+            {
+                // Align expiry with the server (covers remote extends).
+                var localRemaining = _sessions.RemainingSeconds();
+                var serverRemaining = (int)Math.Max(0, (expiresEffMs - _clock!.EffectiveNowMs()) / 1000);
+                var deltaMinutes = (int)Math.Round((serverRemaining - localRemaining) / 60.0);
+                if (deltaMinutes > 0)
+                {
+                    _sessions.Extend(deltaMinutes, suppressOutboxEcho: true);
+                    _logger.LogInformation("adopted remote extension (+{Min}m)", deltaMinutes);
+                }
+            }
+            else
+            {
+                var remainingMin = (int)Math.Max(1, (expiresEffMs - _clock!.EffectiveNowMs()) / 60000);
+                _sessions.StartSession(remainingMin, "admin", null, suppressOutboxEcho: true);
+                _logger.LogInformation("adopted cloud session ({Min}m)", remainingMin);
+            }
+        }
+        else if (status is "ended" or "cancelled" or "expired")
+        {
+            if (_sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
+            {
+                _sessions.End($"cloud_{status}", suppressOutboxEcho: true);
+                _processes!.KillAllTracked();
+                _gamingMode = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Server-refetch safety net: on every SSE (re)connect, pull the authoritative
+    /// session so a reboot — even with a wiped local database — continues the
+    /// same session.
+    /// </summary>
+    private async Task SyncFromBootstrapAsync(CancellationToken ct)
+    {
+        try
+        {
+            if (!IsPaired() || _api is null) return;
+            var bootstrap = await _api.BootstrapAsync(_deviceToken!, _pcId!, ct);
+            var sessionEl = bootstrap.TryGetProperty("active_session", out var s) ? s : default;
+            if (sessionEl.ValueKind == JsonValueKind.Object)
+            {
+                var expiresMs = sessionEl.TryGetProperty("expires_at", out var exp)
+                    ? DateTimeOffset.Parse(exp.GetString()!).ToUnixTimeMilliseconds()
+                    : (long?)null;
+                var st = sessionEl.TryGetProperty("status", out var stat) ? stat.GetString() : null;
+                if (expiresMs is not null && st is not null)
+                {
+                    _sseEventGate.Wait(ct);
+                    try { AdoptServerSessionState(st, expiresMs.Value); }
+                    finally { _sseEventGate.Release(); }
+                }
+            }
+            else if (_sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
+            {
+                // Server says nothing active but we think there is — server wins.
+                _sessions.End("server_reset", suppressOutboxEcho: true);
+                _processes!.KillAllTracked();
+                _gamingMode = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("bootstrap session sync unavailable: {Msg}", ex.Message);
         }
     }
 
