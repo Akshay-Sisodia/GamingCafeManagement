@@ -65,6 +65,25 @@ dotnet build desktop/PcAgent.sln -c Release
 
 > **Troubleshooting (this machine):** a global `MSBuildSDKsPath` env var points at an old scoop SDK 9. If `dotnet build` fails with NETSDK1045, clear it first: `$env:MSBuildSDKsPath = $null; $env:DOTNET_ROOT = "C:\Program Files\dotnet"`.
 
+## Deployment (Render)
+
+The repo ships a [render.yaml](render.yaml) Blueprint: **gcm-api** (web service) + **gcm-worker** (background worker) + managed Postgres + Redis.
+
+1. Render Dashboard → **New → Blueprint** → select this repo.
+2. When prompted, set `JWT_SECRET` to the same strong random value for both `gcm-api` and `gcm-worker`.
+3. First deploy runs `db:push` automatically (schema sync). Seed once via a Render Shell on `gcm-api`:
+   ```bash
+   pnpm --filter server db:seed
+   ```
+4. Point PC agents at `https://gcm-api.onrender.com` (ServerBaseUrl).
+
+Local container check:
+
+```powershell
+docker build -t gcm-backend . 
+docker run -p 3100:3000 -e DATABASE_URL=... -e REDIS_URL=... -e JWT_SECRET=... gcm-backend
+```
+
 ## Notes
 
 - Money is integer minor units everywhere.
