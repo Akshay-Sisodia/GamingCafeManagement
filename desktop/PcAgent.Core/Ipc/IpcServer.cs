@@ -65,18 +65,20 @@ public sealed class IpcServer
             var conn = ++_connSeq;
             _log($"pipe handshake complete (conn #{conn})");
 
-            using (server)
-            using (var reader = new StreamReader(server, Encoding.UTF8, leaveOpen: true))
-            using (var writer = new StreamWriter(server, Encoding.UTF8, leaveOpen: true) { AutoFlush = true })
+            try
             {
-                // Bind the write target for THIS connection only; cleared on exit
-                // so a stale handle can never be used after a disconnect.
-                _writeCurrent = json => writer.WriteLineAsync(json);
-                _boundConn = conn;
-                _log($"pipe writer bound (conn #{_boundConn})");
-
-                try
+                using (server)
+                using (var reader = new StreamReader(server, Encoding.UTF8, leaveOpen: true))
+                using (var writer = new StreamWriter(server, Encoding.UTF8, leaveOpen: true) { AutoFlush = true })
                 {
+                    _log($"pipe streams constructed (conn #{conn})");
+
+                    // Bind the write target for THIS connection only; cleared on
+                    // exit so a stale handle can never be used after a disconnect.
+                    _writeCurrent = json => writer.WriteLineAsync(json);
+                    _boundConn = conn;
+                    _log($"pipe writer bound (conn #{_boundConn})");
+
                     if (ClientConnected is not null)
                     {
                         try { await ClientConnected.Invoke(); }
@@ -110,14 +112,20 @@ public sealed class IpcServer
                         }
                         await WriteAsync(JsonSerializer.Serialize(new { ok = true, data = result }));
                     }
-                }
-                finally
-                {
-                    _writeCurrent = null;
-                    _log($"pipe writer unbound (conn #{conn})");
+                    _log($"read loop ended (conn #{conn})");
                 }
             }
-            _log($"launcher IPC disconnected (conn #{conn}); waiting for reconnect");
+            catch (Exception ex)
+            {
+                // Anything escaping here previously killed the accept loop silently.
+                _log($"CONNECTION LOOP CRASHED (conn #{conn}): {ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                _writeCurrent = null;
+                _boundConn = -1;
+                _log($"launcher IPC disconnected (conn #{conn}); waiting for reconnect");
+            }
         }
     }
 
