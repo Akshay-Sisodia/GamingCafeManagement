@@ -13,9 +13,19 @@ import { OrdersPage } from "./pages/OrdersPage";
 import { CustomersPage } from "./pages/CustomersPage";
 import { AuditPage } from "./pages/AuditPage";
 import { ConflictsPage } from "./pages/ConflictsPage";
+import { KitchenPage } from "./pages/KitchenPage";
 
 function RequireAuth({ children }: { children: ReactElement }) {
   if (!auth.token()) return <Navigate to="/login" replace />;
+  return children;
+}
+
+/** Route-level RBAC: hide internal screens from kitchen accounts. */
+const STAFF_ROLES = ["owner", "manager", "staff"];
+
+function RequireRole({ roles, children }: { roles: string[]; children: ReactElement }) {
+  const user = auth.user();
+  if (!user || !roles.includes(user.role)) return <Navigate to="/kitchen" replace />;
   return children;
 }
 
@@ -25,9 +35,19 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
+          path="/kitchen"
           element={
             <RequireAuth>
-              <Shell />
+              <KitchenPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          element={
+            <RequireAuth>
+              <RequireRole roles={STAFF_ROLES}>
+                <Shell />
+              </RequireRole>
             </RequireAuth>
           }
         >

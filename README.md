@@ -17,9 +17,8 @@ See [`docs/`](./docs) for the full technical design:
 ```text
 apps/
   server/          Fastify API (modular monolith) + BullMQ worker entrypoints
-  admin-web/       Owner/staff dashboard (React)
-  kitchen-web/     Kitchen queue board (React, tablet-first)
-  customer-web/    Customer portal (React, thin V1)
+  admin-web/       Unified web app: dashboard, PCs, orders, kitchen display, shop (React)
+  customer-web/    Standalone customer portal (Phase 2 — needs customer auth)
 packages/
   shared/          Shared types, zod schemas, SSE event catalog
 desktop/

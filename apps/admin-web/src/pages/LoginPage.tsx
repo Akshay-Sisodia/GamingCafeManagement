@@ -21,7 +21,8 @@ export function LoginPage() {
         body: { email, password },
       });
       auth.signIn(res.access_token, res.user);
-      navigate("/", { replace: true });
+      // Role-based landing: kitchen accounts go straight to the order board.
+      navigate(res.user.role === "kitchen" ? "/kitchen" : "/", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

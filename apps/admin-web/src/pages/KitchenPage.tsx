@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChefHat, LogOut } from "lucide-react";
+import { ChefHat } from "lucide-react";
 import type { OrderDto } from "@gaming-cafe/shared";
-import { API, api, auth } from "./lib/api";
-import { useSSE } from "./hooks/useSSE";
-import { useNow } from "./hooks/useNow";
-import { LoginForm } from "./components/LoginForm";
-import { OrderCard, type OrderAction } from "./components/OrderCard";
+import { API, api, auth } from "../lib/api";
+import { useSSE } from "../hooks/useSSE";
+import { useNow } from "../hooks/useNow";
+import { OrderCard, type OrderAction } from "../components/OrderCard";
 
 interface PcLite {
   id: string;
@@ -19,7 +18,11 @@ const COLUMNS = [
   { key: "ready", title: "READY", statuses: ["ready"], accent: "bg-emerald-600" },
 ] as const;
 
-function Board({ onSignOut }: { onSignOut: () => void }) {
+/**
+ * Kitchen Display — standalone tablet-friendly board (no app shell).
+ * Merged from the former kitchen-web app; same live SSE + 10s polling.
+ */
+export function KitchenPage() {
   const queryClient = useQueryClient();
   const [lastError, setLastError] = useState<string | null>(null);
   const now = useNow(15_000);
@@ -82,25 +85,14 @@ function Board({ onSignOut }: { onSignOut: () => void }) {
           <ChefHat className="h-7 w-7 text-emerald-600" />
           <h1 className="text-2xl font-bold tracking-tight">Kitchen Display</h1>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="flex items-center gap-2 text-sm font-medium text-zinc-500">
-            <span
-              className={`inline-block h-3 w-3 rounded-full ${
-                connected ? "animate-pulse bg-emerald-500" : "bg-red-500"
-              }`}
-            />
-            {connected ? "Live" : "Reconnecting…"}
-          </span>
-          <button
-            type="button"
-            onClick={onSignOut}
-            title="Sign out"
-            aria-label="Sign out"
-            className="rounded-lg p-2.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-          >
-            <LogOut className="h-6 w-6" />
-          </button>
-        </div>
+        <span className="flex items-center gap-2 text-sm font-medium text-zinc-500">
+          <span
+            className={`inline-block h-3 w-3 rounded-full ${
+              connected ? "animate-pulse bg-emerald-500" : "bg-red-500"
+            }`}
+          />
+          {connected ? "Live" : "Reconnecting…"}
+        </span>
       </header>
 
       {(lastError || ordersQuery.isError) && (
@@ -160,20 +152,5 @@ function Board({ onSignOut }: { onSignOut: () => void }) {
         })}
       </main>
     </div>
-  );
-}
-
-export default function App() {
-  const [signedIn, setSignedIn] = useState(() => Boolean(auth.token()));
-
-  if (!signedIn) return <LoginForm onDone={() => setSignedIn(true)} />;
-
-  return (
-    <Board
-      onSignOut={() => {
-        auth.signOut();
-        setSignedIn(false);
-      }}
-    />
   );
 }

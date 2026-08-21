@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertOctagon,
+  ChefHat,
   Gamepad2,
   LayoutDashboard,
   LogOut,
@@ -21,6 +22,7 @@ const NAV = [
   { to: "/games", label: "Games & Deployments", icon: Gamepad2, end: false },
   { to: "/menu", label: "Menu", icon: UtensilsCrossed, end: false },
   { to: "/orders", label: "Orders", icon: Receipt, end: false },
+{ to: "/kitchen", label: "Kitchen Display", icon: ChefHat, end: true },
   { to: "/customers", label: "Customers", icon: Users, end: false },
   { to: "/audit", label: "Audit", icon: ScrollText, end: false },
   { to: "/conflicts", label: "Conflicts", icon: AlertOctagon, end: false },
