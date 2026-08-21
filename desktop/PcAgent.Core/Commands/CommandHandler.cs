@@ -69,7 +69,7 @@ public sealed class CommandHandler
                         : throw new InvalidOperationException("missing minutes");
                     if (_sessions.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
                     {
-                        _sessions.Extend(minutes);
+                        _sessions.Extend(minutes, suppressOutboxEcho: true);
                     }
                     else
                     {
@@ -79,7 +79,7 @@ public sealed class CommandHandler
                 }
 
             case "end_session":
-                _sessions.End("admin_command");
+                _sessions.End("admin_command", suppressOutboxEcho: true);
                 _processes.KillAllTracked();
                 return Task.CompletedTask;
 

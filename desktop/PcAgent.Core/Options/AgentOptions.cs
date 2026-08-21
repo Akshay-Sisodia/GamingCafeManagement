@@ -14,4 +14,7 @@ public sealed class AgentOptions
     public int[] WarningMarksSeconds { get; set; } = [600, 300, 60];
     public int TimeSyncIntervalSeconds { get; set; } = 900;
     public double TamperDivergenceThresholdSeconds { get; set; } = 60;
+
+    /// <summary>Optional pairing code provisioned per machine (registry/installer).</summary>
+    public string? PairingCode { get; set; }
 }

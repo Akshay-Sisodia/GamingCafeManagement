@@ -84,7 +84,7 @@ public sealed class SessionEngine
         }
     }
 
-    public string StartSession(int plannedMinutes, string origin, string? serverSessionId = null)
+    public string StartSession(int plannedMinutes, string origin, string? serverSessionId = null, bool suppressOutboxEcho = false)
     {
         if (CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
         {
@@ -103,48 +103,60 @@ public sealed class SessionEngine
             ("$ref", localRef), ("$sid", serverSessionId), ("$start", startMs),
             ("$exp", expiresMs), ("$origin", origin));
 
-        _outbox.Enqueue("SESSION_STARTED", JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        // Cloud-originated sessions are already known to the server — echoing
+        // them back would reconcile as DUPLICATE_SESSION. Only offline or
+        // launcher-originated starts sync.
+        if (!suppressOutboxEcho)
         {
-            ["local_session_ref"] = localRef,
-            ["planned_minutes"] = plannedMinutes,
-            ["origin"] = origin,
-            ["server_session_id"] = serverSessionId,
-        }));
+            _outbox.Enqueue("SESSION_STARTED", JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+            {
+                ["local_session_ref"] = localRef,
+                ["planned_minutes"] = plannedMinutes,
+                ["origin"] = origin,
+                ["server_session_id"] = serverSessionId,
+            }));
+        }
 
         _firedWarnings.Clear();
         SetState(LocalSessionState.Active, localRef);
         return localRef;
     }
 
-    public void Extend(int minutes)
+    public void Extend(int minutes, bool suppressOutboxEcho = false)
     {
         var row = LoadActive() ?? throw new InvalidOperationException("No active session");
         var newExpiry = row.ExpiresMs + minutes * 60_000L;
         _db.ExecuteNonQuery(
             "UPDATE sessions_local SET expires_eff_ms = $exp WHERE local_ref = $ref",
             ("$exp", newExpiry), ("$ref", row.LocalRef));
-        _outbox.Enqueue("SESSION_EXTENDED", JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        if (!suppressOutboxEcho)
         {
-            ["local_session_ref"] = row.LocalRef,
-            ["minutes"] = minutes,
-        }));
+            _outbox.Enqueue("SESSION_EXTENDED", JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+            {
+                ["local_session_ref"] = row.LocalRef,
+                ["minutes"] = minutes,
+            }));
+        }
         _firedWarnings.Clear();
         SetState(LocalSessionState.Active, row.LocalRef);
     }
 
-    public void End(string reason)
+    public void End(string reason, bool suppressOutboxEcho = false)
     {
         var row = LoadActive();
         if (row is null) return;
         _db.ExecuteNonQuery(
             "UPDATE sessions_local SET status = 'ended' WHERE local_ref = $ref",
             ("$ref", row.LocalRef));
-        _outbox.Enqueue(reason == "cancelled" ? "SESSION_CANCELLED" : "SESSION_ENDED",
-            JsonSerializer.SerializeToElement(new Dictionary<string, object?>
-            {
-                ["local_session_ref"] = row.LocalRef,
-                ["reason"] = reason,
-            }));
+        if (!suppressOutboxEcho)
+        {
+            _outbox.Enqueue(reason == "cancelled" ? "SESSION_CANCELLED" : "SESSION_ENDED",
+                JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+                {
+                    ["local_session_ref"] = row.LocalRef,
+                    ["reason"] = reason,
+                }));
+        }
         SetState(LocalSessionState.NoSession, null);
     }
 

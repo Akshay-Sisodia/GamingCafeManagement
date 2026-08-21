@@ -117,7 +117,16 @@ public sealed class AgentWorker : BackgroundService
         {
             try
             {
-                _sessions.Tick();
+                _sessions!.Tick();
+
+                // 1 Hz countdown push to the launcher (suppressed in gaming mode —
+                // the WebView/renderer must stay idle while a game runs).
+                if (!_gamingMode && _ipc is not null &&
+                    _sessions.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
+                {
+                    await _ipc.PushAsync("timer", JsonSerializer.SerializeToElement(
+                        new { remaining_seconds = _sessions.RemainingSeconds() }));
+                }
 
                 if (DateTimeOffset.UtcNow - lastTimeSync > TimeSpan.FromSeconds(_options.TimeSyncIntervalSeconds))
                 {
@@ -161,9 +170,8 @@ public sealed class AgentWorker : BackgroundService
         var code = _db!.GetMeta("pairing_code");
         if (string.IsNullOrEmpty(code))
         {
-            // Convenience for first-time setup on a real machine:
-            //   set PAIRING_CODE env var (from admin app) instead of editing SQLite.
-            code = Environment.GetEnvironmentVariable("PAIRING_CODE");
+            // Provisioned via registry (installer/configure script) or env var.
+            code = _options.PairingCode ?? Environment.GetEnvironmentVariable("PAIRING_CODE");
         }
         if (string.IsNullOrEmpty(code))
         {
@@ -265,18 +273,37 @@ public sealed class AgentWorker : BackgroundService
                         ? DateTimeOffset.Parse(e.GetString()!).ToUnixTimeMilliseconds()
                         : (long?)null;
                     var status = doc.RootElement.TryGetProperty("status", out var s) ? s.GetString() : null;
+
                     if (status == "active" && expiresAt is not null)
                     {
-                        // Server-side session start/extension: resync local expiry via extend path.
-                        var remainingMin = (int)Math.Max(1, (expiresAt.Value - _clock!.EffectiveNowMs()) / 60000);
-                        if (_sessions!.CurrentState == LocalSessionState.Active)
+                        // Cloud-originated change: adopt locally WITHOUT echoing
+                        // back into the outbox (server already knows).
+                        if (_sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
                         {
-                            // Align by extending to the server value conservatively.
-                            _logger.LogInformation("server session update received ({Min}m remaining)", remainingMin);
+                            // Align expiry with the server (covers remote extends).
+                            var localRemaining = _sessions.RemainingSeconds();
+                            var serverRemaining = (int)Math.Max(0, (expiresAt.Value - _clock!.EffectiveNowMs()) / 1000);
+                            var deltaMinutes = (int)Math.Round((serverRemaining - localRemaining) / 60.0);
+                            if (deltaMinutes > 0)
+                            {
+                                _sessions.Extend(deltaMinutes, suppressOutboxEcho: true);
+                                _logger.LogInformation("adopted remote extension (+{Min}m)", deltaMinutes);
+                            }
                         }
                         else
                         {
-                            _sessions.StartSession(remainingMin, "admin");
+                            var remainingMin = (int)Math.Max(1, (expiresAt.Value - _clock!.EffectiveNowMs()) / 60000);
+                            _sessions.StartSession(remainingMin, "admin", null, suppressOutboxEcho: true);
+                            _logger.LogInformation("adopted cloud session ({Min}m)", remainingMin);
+                        }
+                    }
+                    else if (status is "ended" or "cancelled" or "expired")
+                    {
+                        if (_sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
+                        {
+                            _sessions.End($"cloud_{status}", suppressOutboxEcho: true);
+                            _processes!.KillAllTracked();
+                            _gamingMode = false;
                         }
                     }
                     break;
