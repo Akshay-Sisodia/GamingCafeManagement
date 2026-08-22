@@ -52,8 +52,10 @@ public sealed class AgentWorker : BackgroundService
     private CancellationTokenSource _lifetime = new();
     private GameLibraryService? _gameLibrary;
     private List<LauncherGameDto> _launcherGames = new();
+    private List<Dictionary<string, object?>> _menuItems = new();
     private readonly string _ipcToken;
     private readonly object _launcherGamesGate = new();
+    private readonly object _menuGate = new();
 
     public AgentWorker(AgentOptions options, ILogger<AgentWorker> logger)
     {
@@ -158,6 +160,8 @@ public sealed class AgentWorker : BackgroundService
         {
             try { await SyncFromBootstrapAsync(stoppingToken); }
             catch (Exception ex) { _logger.LogDebug("initial bootstrap sync: {Msg}", ex.Message); }
+            try { await RefreshMenuAsync(stoppingToken); }
+            catch (Exception ex) { _logger.LogDebug("initial menu sync: {Msg}", ex.Message); }
         }
 
         _supervisor = new LauncherSupervisor(_options.LauncherPath, _ipcToken,
@@ -538,6 +542,36 @@ public sealed class AgentWorker : BackgroundService
         await _ipc.PushAsync("games", JsonSerializer.SerializeToElement(new { items }));
     }
 
+    private List<Dictionary<string, object?>> MenuSnapshot()
+    {
+        lock (_menuGate) return _menuItems.ToList();
+    }
+
+    private async Task RefreshMenuAsync(CancellationToken ct)
+    {
+        if (!IsPaired() || _api is null) return;
+        var json = await _api.GetMenuAsync(_deviceToken!, _pcId!, ct);
+        if (!json.TryGetProperty("items", out var itemsEl) || itemsEl.ValueKind != JsonValueKind.Array) return;
+
+        var next = itemsEl.EnumerateArray()
+            .Select(el => new Dictionary<string, object?>
+            {
+                ["id"] = el.GetProperty("id").GetString(),
+                ["name"] = el.GetProperty("name").GetString(),
+                ["price_amount"] = el.GetProperty("price_amount").GetInt32(),
+                ["category"] = el.TryGetProperty("category", out var cat) ? cat.GetString() : null,
+            })
+            .ToList();
+
+        lock (_menuGate) _menuItems = next;
+        _logger.LogInformation("menu: loaded {Count} available item(s) from server", next.Count);
+
+        if (_ipc is not null)
+        {
+            await _ipc.PushAsync("menu", JsonSerializer.SerializeToElement(new { items = next }));
+        }
+    }
+
     private sealed record LauncherGameDto(
         string Id,
         string Name,
@@ -623,6 +657,7 @@ public sealed class AgentWorker : BackgroundService
                                 icon_path = g.IconPath,
                                 category = g.Category,
                             }).ToList(),
+                            ["menu"] = MenuSnapshot(),
                         };
                     }
 
@@ -665,21 +700,35 @@ public sealed class AgentWorker : BackgroundService
                 case "order.place":
                     {
                         if (!IsPaired()) throw new InvalidOperationException("offline: cannot place orders");
-                        var body = new Dictionary<string, object?> { ["source"] = "launcher" };
-                        foreach (var prop in req.Payload.EnumerateObject())
+                        if (_sessions!.CurrentState is not (LocalSessionState.Active or LocalSessionState.Expiring))
+                            return new { ok = false, error = "no_active_session" };
+
+                        var orderItems = new List<Dictionary<string, object>>();
+                        if (req.Payload.TryGetProperty("items", out var itemsEl) && itemsEl.ValueKind == JsonValueKind.Array)
                         {
-                            body[prop.Name] = prop.Value.Clone();
+                            itemsEl.EnumerateArray().ToList().ForEach(item =>
+                            {
+                                var menuItemId = item.TryGetProperty("menu_item_id", out var mid) ? mid.GetString() : null;
+                                var qty = item.TryGetProperty("qty", out var q) ? q.GetInt32() : 0;
+                                if (menuItemId is null || qty < 1) return;
+                                orderItems.Add(new Dictionary<string, object>
+                                {
+                                    ["menu_item_id"] = menuItemId,
+                                    ["qty"] = qty,
+                                });
+                            });
                         }
-                        using var httpReq = new HttpRequestMessage(HttpMethod.Post, $"{_options.ServerBaseUrl}/v1/orders")
+                        if (orderItems.Count == 0) throw new ArgumentException("missing items");
+
+                        var body = new Dictionary<string, object?>
                         {
-                            Content = new StringContent(JsonSerializer.Serialize(body), System.Text.Encoding.UTF8, "application/json"),
+                            ["items"] = orderItems,
+                            ["session_id"] = _sessions.ServerSessionId(),
                         };
-                        httpReq.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deviceToken);
-                        httpReq.Headers.Add("X-PC-Id", _pcId);
-                        using var resp = await new HttpClient().SendAsync(httpReq, ct);
-                        resp.EnsureSuccessStatusCode();
-                        var json = await System.Text.Json.JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
-                        return new { order_number = json.RootElement.TryGetProperty("number", out var n) ? n.GetInt32() : 0 };
+                        var result = await _api!.PlaceOrderAsync(_deviceToken!, _pcId!, body, ct);
+                        var orderNumber = result.TryGetProperty("order_number", out var num) ? num.GetInt32() : 0;
+                        _logger.LogInformation("order placed from launcher: #{Number}", orderNumber);
+                        return new { ok = true, order_number = orderNumber };
                     }
 
                 case "superadmin.verify":

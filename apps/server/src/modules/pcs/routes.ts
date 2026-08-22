@@ -12,6 +12,8 @@ import {
   handlePcHealthLatest,
   handleSuperadminVerify,
 } from "./handlers.js";
+import { handleAgentGetMenu } from "../menu/handlers.js";
+import { handleCreateOrderFromDevice } from "../orders/handlers.js";
 
 export async function registerPcRoutes(app: FastifyInstance): Promise<void> {
   app.get("/pcs", { preHandler: requireUser() }, handleListPcs);
@@ -23,6 +25,8 @@ export async function registerPcRoutes(app: FastifyInstance): Promise<void> {
   app.get("/agent/bootstrap", { preHandler: requireDevice() }, handleAgentBootstrap);
   app.get("/agent/config", { preHandler: requireDevice() }, handleAgentConfig);
   app.get("/agent/time-check", { preHandler: requireDevice() }, handleAgentTimeCheck);
+  app.get("/agent/menu", { preHandler: requireDevice() }, handleAgentGetMenu);
+  app.post("/agent/orders", { preHandler: requireDevice() }, handleCreateOrderFromDevice);
   app.post(
     "/pcs/:id/superadmin/verify",
     { preHandler: requireDevice() },

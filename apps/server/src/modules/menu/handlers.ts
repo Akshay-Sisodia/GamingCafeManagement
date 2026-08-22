@@ -6,18 +6,31 @@ import { menuCategories, menuItems } from "../../db/schema.js";
 import { parseBody, problem } from "../../lib/problem.js";
 import { writeAudit } from "../audit/service.js";
 
-export async function handleGetMenu(req: FastifyRequest) {
-  const user = req.user!;
+export interface MenuCategoryDto {
+  id: string;
+  name: string;
+  available: boolean;
+  items: Array<{
+    id: string;
+    name: string;
+    price_amount: number;
+    currency: string;
+    available: boolean;
+    prep_minutes: number;
+  }>;
+}
+
+export async function getMenuForCafe(cafeId: string): Promise<MenuCategoryDto[]> {
   const categories = await db
     .select()
     .from(menuCategories)
-    .where(eq(menuCategories.cafeId, user.cafe_id))
+    .where(eq(menuCategories.cafeId, cafeId))
     .orderBy(asc(menuCategories.displayOrder), asc(menuCategories.name))
     .limit(100);
   const items = await db
     .select()
     .from(menuItems)
-    .where(and(eq(menuItems.cafeId, user.cafe_id), isNull(menuItems.deletedAt)))
+    .where(and(eq(menuItems.cafeId, cafeId), isNull(menuItems.deletedAt)))
     .orderBy(asc(menuItems.name))
     .limit(500);
 
@@ -36,6 +49,28 @@ export async function handleGetMenu(req: FastifyRequest) {
         prep_minutes: i.prepMinutes,
       })),
   }));
+}
+
+export async function handleGetMenu(req: FastifyRequest) {
+  return getMenuForCafe(req.user!.cafe_id);
+}
+
+/** Kiosk menu — available categories and items only, flat list for launcher. */
+export async function handleAgentGetMenu(req: FastifyRequest) {
+  const categories = await getMenuForCafe(req.device!.cafe_id);
+  const items = categories
+    .filter((c) => c.available)
+    .flatMap((c) =>
+      c.items
+        .filter((i) => i.available)
+        .map((i) => ({
+          id: i.id,
+          name: i.name,
+          price_amount: i.price_amount,
+          category: c.name,
+        })),
+    );
+  return { items };
 }
 
 export async function handleCreateMenuCategory(req: FastifyRequest) {

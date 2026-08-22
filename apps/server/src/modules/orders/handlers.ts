@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { createOrderSchema, type OrderDto, type OrderStatus } from "@gaming-cafe/shared";
+import { createOrderSchema, type OrderDto, type OrderStatus, type CreateOrderInput } from "@gaming-cafe/shared";
 import { z } from "zod";
 import type { FastifyRequest } from "fastify";
 import { db } from "../../db/index.js";
@@ -69,6 +69,58 @@ export async function handleCreateOrder(req: FastifyRequest) {
   });
 
   return { order: toOrderDto(order, items) };
+}
+
+const deviceOrderBodySchema = z.object({
+  items: createOrderSchema.shape.items,
+  session_id: z.string().uuid().nullable().optional(),
+});
+
+export async function handleCreateOrderFromDevice(req: FastifyRequest) {
+  const device = req.device!;
+  const body = parseBody(deviceOrderBodySchema, req.body);
+  const input: CreateOrderInput = {
+    source: "launcher",
+    pc_id: device.pc_id,
+    session_id: body.session_id ?? null,
+    items: body.items,
+  };
+
+  const { order, items } = await db.transaction((tx) =>
+    createOrderInTx(tx, {
+      cafeId: device.cafe_id,
+      input,
+      actor: { type: "pc", id: device.pc_id },
+    }),
+  );
+
+  await writeAudit(db, {
+    cafeId: device.cafe_id,
+    actorType: "pc",
+    actorId: device.pc_id,
+    action: "ORDER_CREATED",
+    source: "online",
+    entityType: "order",
+    entityId: order.id,
+    metadata: {
+      number: order.number,
+      total_amount: order.totalAmount,
+      item_count: items.length,
+    },
+  });
+
+  publishToCafe(device.cafe_id, {
+    event: "order.updated",
+    data: {
+      order_id: order.id,
+      order_number: order.number,
+      pc_id: order.pcId,
+      status: order.status,
+      at: new Date().toISOString(),
+    },
+  });
+
+  return { order_number: order.number, order: toOrderDto(order, items) };
 }
 
 export async function handleOrderTransition(

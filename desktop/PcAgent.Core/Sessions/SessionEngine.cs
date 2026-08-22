@@ -66,6 +66,8 @@ public sealed class SessionEngine
         return row?.ExpiresMs;
     }
 
+    public string? ServerSessionId() => LoadActive()?.ServerId;
+
     /// <summary>Re-derives state from SQLite after service/OS restart.</summary>
     public void RecoverOnBoot()
     {

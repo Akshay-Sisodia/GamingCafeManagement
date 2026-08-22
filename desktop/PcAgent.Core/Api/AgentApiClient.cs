@@ -158,5 +158,21 @@ public sealed class AgentApiClient : IDisposable
         }
     }
 
+    public async Task<JsonElement> GetMenuAsync(string token, string pcId, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "v1/agent/menu");
+        SetDeviceAuth(req, token, pcId);
+        using var resp = await _http.SendAsync(req, ct);
+        return await ReadJsonAsync(resp, ct);
+    }
+
+    public async Task<JsonElement> PlaceOrderAsync(string token, string pcId, object body, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "v1/agent/orders") { Content = JsonBody(body) };
+        SetDeviceAuth(req, token, pcId);
+        using var resp = await _http.SendAsync(req, ct);
+        return await ReadJsonAsync(resp, ct);
+    }
+
     public void Dispose() => _http.Dispose();
 }

@@ -69,15 +69,30 @@ public sealed class MainViewModel : ObservableObject
             }
         };
 
-        Food.PlaceOrderRequested += async (items, total) =>
+        Food.PlaceOrderRequested += async items =>
         {
-            var payload = new
+            var result = await _ipc.SendRequestAsync(IpcProtocol.MethodOrderPlace, new
             {
-                source = "launcher",
                 items = items.Select(i => new { menu_item_id = i.ItemId, qty = i.Qty }).ToArray(),
-            };
-            var result = await _ipc.SendRequestAsync(IpcProtocol.MethodOrderPlace, payload);
-            Food.OnOrderPlaced(result is not null);
+            });
+            if (result is null)
+            {
+                Food.OnOrderPlaced(false, "Could not reach agent.");
+                return;
+            }
+            if (result.Value.TryGetProperty("error", out var errEl))
+            {
+                Food.OnOrderPlaced(false, errEl.GetString() switch
+                {
+                    "no_active_session" => "Start a gaming session before ordering food.",
+                    _ => "Order failed — ask staff.",
+                });
+                return;
+            }
+            var orderNumber = result.Value.TryGetProperty("order_number", out var numEl) ? numEl.GetInt32() : 0;
+            Food.OnOrderPlaced(
+                orderNumber > 0,
+                orderNumber > 0 ? $"Order #{orderNumber} placed — kitchen is preparing it." : "Order failed — ask staff.");
         };
 
         Superadmin.VerifyRequested += async password =>
@@ -409,6 +424,14 @@ public sealed class MainViewModel : ObservableObject
                         }
                         break;
                     }
+
+                case "menu":
+                    if (push.Data.TryGetProperty("items", out var menuItems) && menuItems.ValueKind == JsonValueKind.Array)
+                    {
+                        Food.LoadMenu(menuItems);
+                        SimpleFileLogger.Info($"menu push: {menuItems.GetArrayLength()} items");
+                    }
+                    break;
             }
         });
     }
@@ -472,6 +495,12 @@ public sealed class MainViewModel : ObservableObject
         else
         {
             AgentStatusText = "Connected — session sync active";
+        }
+
+        if (bootstrap.TryGetProperty("menu", out var menuEl) && menuEl.ValueKind == JsonValueKind.Array)
+        {
+            Food.LoadMenu(menuEl);
+            SimpleFileLogger.Info($"bootstrap menu: {menuEl.GetArrayLength()} items");
         }
     }
 
@@ -607,7 +636,7 @@ public sealed class FoodViewModel : ObservableObject
     public ObservableCollection<MenuItemVm> Menu { get; } = new();
     public ObservableCollection<CartLine> Cart { get; } = new();
 
-    public event Action<IReadOnlyList<CartLine>, long>? PlaceOrderRequested;
+    public event Action<IReadOnlyList<CartLine>>? PlaceOrderRequested;
 
     public RelayCommand AddToCart { get; }
     public RelayCommand IncrementQty { get; }
@@ -618,11 +647,6 @@ public sealed class FoodViewModel : ObservableObject
 
     public FoodViewModel()
     {
-        Menu.Add(new MenuItemVm("m1", "Chicken Burger", 18000));
-        Menu.Add(new MenuItemVm("m2", "Cheese Burger", 20000));
-        Menu.Add(new MenuItemVm("m3", "French Fries", 10000));
-        Menu.Add(new MenuItemVm("m4", "Coke", 6000));
-
         AddToCart = new RelayCommand(p =>
         {
             if (p is not MenuItemVm item) return;
@@ -647,8 +671,22 @@ public sealed class FoodViewModel : ObservableObject
         PlaceOrder = new RelayCommand(_ =>
         {
             if (Cart.Count == 0) return;
-            PlaceOrderRequested?.Invoke(Cart.ToList(), TotalPaise);
+            PlaceOrderRequested?.Invoke(Cart.ToList());
         }, _ => Cart.Count > 0);
+    }
+
+    public void LoadMenu(JsonElement itemsEl)
+    {
+        Menu.Clear();
+        itemsEl.EnumerateArray().ToList().ForEach(el =>
+        {
+            var id = el.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+            var name = el.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
+            var price = el.TryGetProperty("price_amount", out var priceEl) ? priceEl.GetInt32() : 0;
+            if (id is null || name is null || price <= 0) return;
+            Menu.Add(new MenuItemVm(id, name, price));
+        });
+        StatusText = Menu.Count > 0 ? "" : "Menu not loaded — check agent connection.";
     }
 
     public string StatusText { get => _statusText; set => Set(ref _statusText, value); }
@@ -659,9 +697,11 @@ public sealed class FoodViewModel : ObservableObject
 
     public bool HasCartItems => Cart.Count > 0;
 
-    public void OnOrderPlaced(bool success)
+    public void OnOrderPlaced(bool success, string? message = null)
     {
-        StatusText = success ? "Order placed! It will be delivered to your PC." : "Order failed — please ask staff.";
+        StatusText = message ?? (success
+            ? "Order placed! It will be delivered to your PC."
+            : "Order failed — please ask staff.");
         if (success)
         {
             Cart.Clear();
