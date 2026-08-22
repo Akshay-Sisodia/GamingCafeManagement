@@ -1,16 +1,34 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useToast } from "../../components/Toasts";
+import type { MenuCategoryDto } from "../../lib/types";
 import { parseAddItemInput } from "./parseAddItemInput";
 
-export function useAddItemModal(onClose: () => void) {
+export function useAddItemModal(
+  open: boolean,
+  categories: MenuCategoryDto[],
+  onClose: () => void,
+) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [prepMinutes, setPrepMinutes] = useState("10");
   const [categoryId, setCategoryId] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    if (categories.length === 0) {
+      setCategoryId("");
+      return;
+    }
+    setCategoryId((prev) => {
+      const first = categories[0];
+      if (!first) return "";
+      return prev && categories.some((category) => category.id === prev) ? prev : first.id;
+    });
+  }, [open, categories]);
 
   const createItem = useMutation({
     mutationFn: (body: {

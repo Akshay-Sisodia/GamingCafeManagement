@@ -1,4 +1,5 @@
 import type { MenuCategoryDto } from "../../lib/types";
+import { FormSelect } from "../../components/FormSelect";
 
 export function AddItemFields({
   name,
@@ -63,19 +64,21 @@ export function AddItemFields({
       </div>
       <label className="block text-xs text-zinc-400">
         Category
-        <select
-          value={categoryId}
-          onChange={(e) => onCategoryIdChange(e.target.value)}
-          required
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500"
-        >
-          <option value="">Select category…</option>
-          {categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-        </select>
+        {categories.length === 0 ? (
+          <p className="mt-1 text-sm text-amber-400/90">Add a category below before creating items.</p>
+        ) : (
+          <FormSelect
+            value={categoryId}
+            onChange={(e) => onCategoryIdChange(e.target.value)}
+            required
+          >
+            {categories.map((category) => (
+              <option key={category.id} value={category.id} className="bg-zinc-900 text-zinc-100">
+                {category.name}
+              </option>
+            ))}
+          </FormSelect>
+        )}
       </label>
       <div className="flex justify-end gap-3 pt-2">
         <button
@@ -87,7 +90,7 @@ export function AddItemFields({
         </button>
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || categories.length === 0}
           className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
         >
           {pending ? "Saving…" : "Add item"}

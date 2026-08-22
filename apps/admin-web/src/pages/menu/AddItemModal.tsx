@@ -12,7 +12,7 @@ export function AddItemModal({
   categories: MenuCategoryDto[];
   onClose: () => void;
 }) {
-  const form = useAddItemModal(onClose);
+  const form = useAddItemModal(open, categories, onClose);
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -22,11 +22,14 @@ export function AddItemModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70" onClick={onClose} aria-hidden="true" />
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onClose}
+    >
       <form
         onSubmit={handleSubmit}
-        className="relative w-full max-w-md space-y-4 rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+        className="relative z-10 w-full max-w-md space-y-4 rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl"
       >
         <AddItemFields
           name={form.name}
