@@ -4,6 +4,8 @@ import { api } from "../../lib/api";
 import type { MenuCategoryDto } from "../../lib/types";
 import { useToast } from "../../components/Toasts";
 
+const EMPTY_MENU: MenuCategoryDto[] = [];
+
 export function useMenuPatch() {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -34,14 +36,17 @@ export function useMenuPatch() {
 
 export function useMenuPage() {
   const [addOpen, setAddOpen] = useState(false);
+  const [categoryOpen, setCategoryOpen] = useState(false);
   const menuQuery = useQuery({ queryKey: ["menu"], queryFn: () => api<MenuCategoryDto[]>("/menu") });
   const patchItem = useMenuPatch();
 
   return {
     addOpen,
     setAddOpen,
+    categoryOpen,
+    setCategoryOpen,
     menuQuery,
     patchItem,
-    categories: menuQuery.data ?? [],
+    categories: menuQuery.data ?? EMPTY_MENU,
   };
 }
