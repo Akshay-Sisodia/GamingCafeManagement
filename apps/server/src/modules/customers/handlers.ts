@@ -2,9 +2,16 @@ import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { FastifyRequest } from "fastify";
 import { db } from "../../db/index.js";
-import { customers, loyaltyAccounts, sessions, walletTransactions, wallets } from "../../db/schema.js";
+import { customers, sessions } from "../../db/schema.js";
 import { parseBody, problem } from "../../lib/problem.js";
 import { writeAudit } from "../audit/service.js";
+
+function iso(value: Date | string | null | undefined): string {
+  if (!value) return new Date(0).toISOString();
+  if (value instanceof Date) return value.toISOString();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date(0).toISOString() : parsed.toISOString();
+}
 
 export async function handleListCustomers(req: FastifyRequest) {
   const user = req.user!;
@@ -24,21 +31,11 @@ export async function handleListCustomers(req: FastifyRequest) {
 
   const rows = await db
     .select({
-      customer: customers,
-      walletBalance: sql<number | null>`(
-        select coalesce(wt.balance_after, 0)::bigint
-        from ${walletTransactions} wt
-        inner join ${wallets} w on w.id = wt.wallet_id
-        where w.customer_id = ${customers.id}
-        order by wt.created_at desc
-        limit 1
-      )`,
-      loyaltyPoints: sql<number | null>`(
-        select coalesce(${loyaltyAccounts.pointsBalance}, 0)::bigint
-        from ${loyaltyAccounts}
-        where ${loyaltyAccounts.customerId} = ${customers.id}
-        limit 1
-      )`,
+      id: customers.id,
+      name: customers.name,
+      email: customers.email,
+      phone: customers.phone,
+      createdAt: customers.createdAt,
     })
     .from(customers)
     .where(where)
@@ -46,13 +43,13 @@ export async function handleListCustomers(req: FastifyRequest) {
     .limit(200);
 
   return rows.map((r) => ({
-    id: r.customer.id,
-    name: r.customer.name,
-    email: r.customer.email,
-    phone: r.customer.phone,
-    wallet_balance: Number(r.walletBalance ?? 0),
-    loyalty_points: Number(r.loyaltyPoints ?? 0),
-    created_at: r.customer.createdAt?.toISOString() ?? null,
+    id: r.id,
+    name: r.name,
+    email: r.email,
+    phone: r.phone,
+    wallet_balance: 0,
+    loyalty_points: 0,
+    created_at: iso(r.createdAt),
   }));
 }
 
@@ -152,7 +149,7 @@ export async function handleGetCustomer(req: FastifyRequest) {
       email: customer.email,
       phone: customer.phone,
       status: customer.status,
-      created_at: customer.createdAt?.toISOString() ?? null,
+      created_at: iso(customer.createdAt),
     },
     play_stats: stats[0] ?? { total_sessions: 0, total_minutes: 0 },
   };
