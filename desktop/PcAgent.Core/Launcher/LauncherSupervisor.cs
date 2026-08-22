@@ -9,14 +9,16 @@ namespace PcAgent.Core.Launcher;
 public sealed class LauncherSupervisor : IDisposable
 {
     private readonly string _launcherPath;
+    private readonly string? _ipcToken;
     private readonly Action<string> _log;
     private readonly CancellationTokenSource _cts = new();
     private readonly Queue<DateTimeOffset> _recentStarts = new();
     private Process? _current;
 
-    public LauncherSupervisor(string launcherPath, Action<string>? log = null)
+    public LauncherSupervisor(string launcherPath, string? ipcToken = null, Action<string>? log = null)
     {
         _launcherPath = launcherPath;
+        _ipcToken = ipcToken;
         _log = log ?? (_ => { });
     }
 
@@ -37,11 +39,23 @@ public sealed class LauncherSupervisor : IDisposable
                     continue;
                 }
 
-                _current = Process.Start(new ProcessStartInfo
+                if (IsLauncherAlreadyRunning())
+                {
+                    await DelayAsync(TimeSpan.FromSeconds(10), ct);
+                    continue;
+                }
+
+                var startInfo = new ProcessStartInfo
                 {
                     FileName = _launcherPath,
                     UseShellExecute = true,
-                });
+                };
+                if (!string.IsNullOrWhiteSpace(_ipcToken))
+                {
+                    startInfo.EnvironmentVariables["GAMINGCAFE_IPC_TOKEN"] = _ipcToken;
+                }
+
+                _current = Process.Start(startInfo);
                 if (_current is null)
                 {
                     _log("launcher failed to start");
@@ -68,6 +82,11 @@ public sealed class LauncherSupervisor : IDisposable
                 await DelayAsync(TimeSpan.FromSeconds(5), ct);
             }
         }
+    }
+
+    private static bool IsLauncherAlreadyRunning()
+    {
+        return Process.GetProcessesByName("GamingLauncher").Length > 0;
     }
 
     private bool RateLimited()

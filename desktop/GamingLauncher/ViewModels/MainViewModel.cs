@@ -20,8 +20,8 @@ public sealed class MainViewModel : ObservableObject
     private bool _sessionActive;
     private string _remainingText = "--:--:--";
     private string _sessionAlertText = "";
-    private string _sessionAlertColor = "#34D399";
-    private string _timerColor = "#34D399";
+    private string _sessionAlertColor = "#F4F4F5";
+    private string _timerColor = "#F4F4F5";
     private string _agentStatusText = "Connecting to agent…";
     private bool _agentConnected;
     private object? _currentView;
@@ -44,7 +44,11 @@ public sealed class MainViewModel : ObservableObject
             AgentStatusText = connected
                 ? "Connected — session sync active"
                 : "Agent offline — demo games only, orders may fail";
-            if (!connected) SessionAlertText = "";
+            if (!connected)
+            {
+                SessionAlertText = "";
+                Games.Items.Clear();
+            }
         };
 
         Games.LaunchRequested += async game =>
@@ -53,7 +57,7 @@ public sealed class MainViewModel : ObservableObject
                 new { executable_path = game.ExecutablePath, launch_args = game.LaunchArgs });
             if (result is null)
             {
-                SessionAlertText = "Could not launch game — agent unreachable";
+                SessionAlertText = "Could not launch — game missing or agent error";
                 SessionAlertColor = "#F87171";
             }
             else
@@ -76,12 +80,87 @@ public sealed class MainViewModel : ObservableObject
         Superadmin.VerifyRequested += async password =>
         {
             var result = await _ipc.SendRequestAsync(IpcProtocol.MethodSuperadminVerify, new { password });
-            Superadmin.OnVerifyResult(result is not null);
+            if (result is null)
+            {
+                Superadmin.OnVerifyResult(false, "Could not reach agent — is PcAgent running?");
+                return;
+            }
+
+            var ok = result.Value.TryGetProperty("ok", out var okEl) && okEl.GetBoolean();
+            if (ok)
+            {
+                Superadmin.OnVerifyResult(true);
+                RefreshSuperadminLibrary();
+                return;
+            }
+
+            var reason = result.Value.TryGetProperty("reason", out var reasonEl) ? reasonEl.GetString() : null;
+            Superadmin.OnVerifyResult(false, reason switch
+            {
+                "rate_limited" => "Too many attempts — wait and try again.",
+                "no_verifier" => "Wrong password, or this PC is offline with no local verifier.",
+                _ => "ACCESS DENIED — attempt logged",
+            });
         };
         Superadmin.MaintenanceActionRequested += async action =>
         {
             await _ipc.SendRequestAsync(IpcProtocol.MethodMaintenanceAction, new { action });
             if (action == "enter_windows") Application.Current.Shutdown();
+        };
+        Superadmin.ScanGamesRequested += async () =>
+        {
+            Superadmin.GamesStatus = "Scanning this PC…";
+            var result = await _ipc.SendRequestAsync(IpcProtocol.MethodGamesImportDiscovered, null);
+            if (result is null)
+            {
+                Superadmin.GamesStatus = "Scan failed — is the agent running?";
+                return;
+            }
+
+            var added = result.Value.TryGetProperty("added_count", out var addedEl) ? addedEl.GetInt32() : 0;
+            var total = result.Value.TryGetProperty("total", out var totalEl) ? totalEl.GetInt32() : Games.Items.Count;
+            Superadmin.GamesStatus = added > 0
+                ? $"Added {added} game(s). Library now has {total}."
+                : $"No new games found. Library has {total}.";
+            RefreshSuperadminLibrary();
+        };
+        Superadmin.AddShortcutRequested += async path =>
+        {
+            Superadmin.GamesStatus = "Adding game…";
+            var result = await _ipc.SendRequestAsync(IpcProtocol.MethodGamesAdd, new { shortcut_path = path });
+            if (result is null)
+            {
+                Superadmin.GamesStatus = "Could not add — check the shortcut path.";
+                return;
+            }
+
+            var name = result.Value.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : "Game";
+            Superadmin.GamesStatus = $"Added {name} to this PC's library.";
+            RefreshSuperadminLibrary();
+        };
+        Superadmin.RemoveGameRequested += async gameId =>
+        {
+            var result = await _ipc.SendRequestAsync(IpcProtocol.MethodGamesRemove, new { game_id = gameId });
+            var ok = result is not null
+                && result.Value.TryGetProperty("ok", out var okEl)
+                && okEl.GetBoolean();
+            Superadmin.GamesStatus = ok ? "Removed from library." : "Could not remove — try again.";
+            RefreshSuperadminLibrary();
+        };
+        Superadmin.SetThumbnailRequested += async (gameId, imagePath) =>
+        {
+            Superadmin.GamesStatus = "Saving thumbnail…";
+            var result = await _ipc.SendRequestAsync(IpcProtocol.MethodGamesSetThumbnail,
+                new { game_id = gameId, image_path = imagePath });
+            Superadmin.GamesStatus = ReadIpcStatus(result, "Thumbnail updated.", "Could not save thumbnail.");
+        };
+        Superadmin.SetPathRequested += async (gameId, shortcutPath) =>
+        {
+            Superadmin.GamesStatus = "Updating launch path…";
+            var result = await _ipc.SendRequestAsync(IpcProtocol.MethodGamesSetPath,
+                new { game_id = gameId, shortcut_path = shortcutPath });
+            Superadmin.GamesStatus = ReadIpcStatus(result, "Launch path updated.", "Could not update path.");
+            RefreshSuperadminLibrary();
         };
 
         OpenGamesCommand = new RelayCommand(_ => CurrentView = Games);
@@ -89,12 +168,6 @@ public sealed class MainViewModel : ObservableObject
         OpenSessionInfoCommand = new RelayCommand(_ => CurrentView = SessionInfo);
         BackToGamesCommand = new RelayCommand(_ => CurrentView = Games);
         OpenSuperadminCommand = new RelayCommand(_ => Superadmin.Show());
-        ToggleThemeCommand = new RelayCommand(_ =>
-        {
-            App.Themes.Toggle();
-            OnPropertyChanged(nameof(IsDayMode));
-            OnPropertyChanged(nameof(ThemeToggleLabel));
-        });
 
         _tick = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _tick.Tick += (_, _) => OnTick();
@@ -111,11 +184,6 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand OpenSessionInfoCommand { get; }
     public RelayCommand BackToGamesCommand { get; }
     public RelayCommand OpenSuperadminCommand { get; }
-    public RelayCommand ToggleThemeCommand { get; }
-
-    public bool IsDayMode => App.Themes.IsDayMode;
-
-    public string ThemeToggleLabel => IsDayMode ? "◐ Night" : "◑ Day";
 
     public int ContentSwitchKey { get => _contentSwitchKey; private set => Set(ref _contentSwitchKey, value); }
 
@@ -127,14 +195,6 @@ public sealed class MainViewModel : ObservableObject
             if (!Set(ref _currentView, value)) return;
             ContentSwitchKey++;
             NotifyNavSelection();
-            if (value is GamingModeViewModel)
-            {
-                Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(_ =>
-                    Application.Current?.Dispatcher.Invoke(() =>
-                    {
-                        if (CurrentView is GamingModeViewModel) CurrentView = Games;
-                    }));
-            }
         }
     }
 
@@ -193,20 +253,21 @@ public sealed class MainViewModel : ObservableObject
     {
         // Unconditional 10s resync — the launcher never depends solely on
         // pushes for correctness; pushes are an optimization over this poll.
-        if (!_resyncInFlight && _ipc.IsConnected &&
+        if (_ipc.IsConnected &&
             (DateTime.UtcNow - _lastResyncUtc).TotalSeconds >= 10)
         {
-            _resyncInFlight = true;
             _ = ResyncAsync();
         }
 
-        if (!SessionActive) return;
+        if (!SessionActive || _sessionPaused) return;
         if (_remainingSeconds > 0) _remainingSeconds--;
         UpdateCountdownUi();
     }
 
     private async Task ResyncAsync()
     {
+        if (!await _resyncGate.WaitAsync(0)) return;
+
         try
         {
             var result = await _ipc.SendRequestAsync(IpcProtocol.MethodBootstrap, null);
@@ -244,14 +305,14 @@ public sealed class MainViewModel : ObservableObject
         }
         finally
         {
-            _resyncInFlight = false;
-        _lastResyncUtc = DateTime.UtcNow;
-            _lastTimerPushUtc = DateTime.UtcNow; // give the stream 10s grace
+            _lastResyncUtc = DateTime.UtcNow;
+            _lastTimerPushUtc = DateTime.UtcNow;
+            _resyncGate.Release();
         }
     }
 
     private bool _timerPushLogged;
-    private bool _resyncInFlight;
+    private readonly SemaphoreSlim _resyncGate = new(1, 1);
     private DateTime _lastTimerPushUtc = DateTime.UtcNow;
     private DateTime _lastResyncUtc = DateTime.UtcNow;
 
@@ -263,37 +324,30 @@ public sealed class MainViewModel : ObservableObject
         if (_remainingSeconds <= 60)
         {
             SessionAlertText = "1 minute remaining";
-            SessionAlertColor = "#F87171";
-            TimerColor = "#F87171";
+            SessionAlertColor = "#EF4444";
+            TimerColor = "#EF4444";
         }
         else if (_remainingSeconds <= 300)
         {
             SessionAlertText = "5 minutes remaining";
-            SessionAlertColor = "#FBBF24";
-            TimerColor = "#FBBF24";
+            SessionAlertColor = "#F59E0B";
+            TimerColor = "#F59E0B";
         }
         else if (_remainingSeconds <= 600)
         {
             SessionAlertText = "10 minutes remaining";
-            SessionAlertColor = "#FBBF24";
-            TimerColor = "#34D399";
+            SessionAlertColor = "#F59E0B";
+            TimerColor = "#F4F4F5";
         }
         else
         {
             SessionAlertText = "";
-            SessionAlertColor = "#34D399";
-            TimerColor = "#34D399";
-        }
-
-        if (_remainingSeconds == 0)
-        {
-            SessionActive = false;
-            SessionAlertText = "Session ended";
-            SessionAlertColor = "#F87171";
-            TimerColor = "#8FA396";
-            CurrentView = Games;
+            SessionAlertColor = "#F4F4F5";
+            TimerColor = "#F4F4F5";
         }
     }
+
+    private bool _sessionPaused;
 
     private void OnPush(IpcPush push)
     {
@@ -319,7 +373,8 @@ public sealed class MainViewModel : ObservableObject
                 case "session":
                     {
                         var state = push.Data.TryGetProperty("state", out var st) ? st.GetString() : null;
-                        SessionActive = state == "active";
+                        _sessionPaused = state == "paused";
+                        SessionActive = state is "active" or "paused";
                         var remaining = SessionActive && push.Data.TryGetProperty("remaining_seconds", out var rem)
                             ? rem.GetInt64()
                             : 0L;
@@ -343,46 +398,38 @@ public sealed class MainViewModel : ObservableObject
                 case "games":
                     {
                         var list = ParseGameTiles(push.Data);
-                        if (list.Count > 0) Games.ReplaceAll(list);
+                        Games.ReplaceAll(list);
+                        RefreshSuperadminLibrary();
+                        if (list.Count > 0)
+                        {
+                            SimpleFileLogger.Info($"games push: {list.Count} titles");
+                        }
                         break;
                     }
             }
         });
     }
 
-    private async Task BootstrapAsync()
+    private async Task RetryBootstrapAsync()
     {
-        // Wait briefly for IPC; fall back to sample data so the UI is demoable standalone.
-        for (var i = 0; i < 10 && !_ipc.IsConnected; i++)
+        for (var i = 0; i < 5 && _ipc.IsConnected; i++)
         {
             await Task.Delay(500);
-        }
-
-        var bootstrap = await _ipc.SendRequestAsync(IpcProtocol.MethodBootstrap, null);
-        if (bootstrap is null)
-        {
-            AgentConnected = false;
-            AgentStatusText = "Agent offline — showing demo library";
-            SimpleFileLogger.Info("agent unreachable — using sample data");
-            Games.ReplaceAll(new List<GameTileVm>
-            {
-                new("g1", "CS2", "C:\\Games\\cs2.exe", "", GameCoverLoader.DemoCoverUrl("cs2"), "FPS"),
-                new("g2", "VALORANT", "C:\\Riot\\VALORANT.exe", "", GameCoverLoader.DemoCoverUrl("valorant"), "FPS"),
-                new("g3", "GTA V", "C:\\Games\\GTA5.exe", "", GameCoverLoader.DemoCoverUrl("gtav"), "Open World"),
-                new("g4", "FIFA 24", "C:\\Games\\FIFA24.exe", "", GameCoverLoader.DemoCoverUrl("fifa24"), "Sports"),
-                new("g5", "FORTNITE", "C:\\Games\\Fortnite.exe", "", GameCoverLoader.DemoCoverUrl("fortnite"), "Battle Royale"),
-                new("g6", "APEX", "C:\\Games\\Apex.exe", "", GameCoverLoader.DemoCoverUrl("apex"), "Battle Royale"),
-            });
+            var bootstrap = await _ipc.SendRequestAsync(IpcProtocol.MethodBootstrap, null);
+            if (bootstrap is null) continue;
+            ApplyBootstrap(bootstrap.Value);
             return;
         }
+    }
 
-        if (bootstrap.Value.TryGetProperty("pc_id", out var pcIdEl))
+    private void ApplyBootstrap(JsonElement bootstrap)
+    {
+        if (bootstrap.TryGetProperty("pc_id", out var pcIdEl))
         {
             PcName = FormatPcLabel(pcIdEl.GetString());
         }
 
-        // Authoritative session state at connect time (covers reboots).
-        if (bootstrap.Value.TryGetProperty("session", out var sessionEl) &&
+        if (bootstrap.TryGetProperty("session", out var sessionEl) &&
             sessionEl.ValueKind == JsonValueKind.Object)
         {
             var state = sessionEl.TryGetProperty("state", out var st) ? st.GetString() : null;
@@ -401,17 +448,66 @@ public sealed class MainViewModel : ObservableObject
             }
         }
 
-        AgentStatusText = "Connected — session sync active";
+        AgentConnected = true;
 
-        if (bootstrap.Value.TryGetProperty("games", out var gamesEl) && gamesEl.ValueKind == JsonValueKind.Array)
+        if (bootstrap.TryGetProperty("games", out var gamesEl) && gamesEl.ValueKind == JsonValueKind.Array)
         {
             var tiles = gamesEl.EnumerateArray()
                 .Select(ParseGameTile)
                 .Where(g => g is not null)
                 .Cast<GameTileVm>()
                 .ToList();
-            if (tiles.Count > 0) Games.ReplaceAll(tiles);
+            Games.ReplaceAll(tiles);
+            AgentStatusText = tiles.Count > 0
+                ? "Connected — session sync active"
+                : "Connected — edit games.local.json on this PC";
+            if (tiles.Count > 0)
+            {
+                SimpleFileLogger.Info($"bootstrap games: {tiles.Count} titles");
+            }
         }
+        else
+        {
+            AgentStatusText = "Connected — session sync active";
+        }
+    }
+
+    private async Task BootstrapAsync()
+    {
+        // Wait briefly for IPC; fall back to sample data so the UI is demoable standalone.
+        for (var i = 0; i < 10 && !_ipc.IsConnected; i++)
+        {
+            await Task.Delay(500);
+        }
+
+        var bootstrap = await _ipc.SendRequestAsync(IpcProtocol.MethodBootstrap, null);
+        if (bootstrap is null)
+        {
+            if (_ipc.IsConnected)
+            {
+                AgentConnected = true;
+                AgentStatusText = "Connected — syncing session…";
+                SimpleFileLogger.Info("bootstrap pending — agent connected, retrying");
+                _ = RetryBootstrapAsync();
+                return;
+            }
+
+            AgentConnected = false;
+            AgentStatusText = "Agent offline — showing demo library";
+            SimpleFileLogger.Info("agent unreachable — using sample data");
+            Games.ReplaceAll(new List<GameTileVm>
+            {
+                new("g1", "CS2", "C:\\Games\\cs2.exe", "", GameCoverLoader.DemoCoverUrl("cs2"), "FPS"),
+                new("g2", "VALORANT", "C:\\Riot\\VALORANT.exe", "", GameCoverLoader.DemoCoverUrl("valorant"), "FPS"),
+                new("g3", "GTA V", "C:\\Games\\GTA5.exe", "", GameCoverLoader.DemoCoverUrl("gtav"), "Open World"),
+                new("g4", "FIFA 24", "C:\\Games\\FIFA24.exe", "", GameCoverLoader.DemoCoverUrl("fifa24"), "Sports"),
+                new("g5", "FORTNITE", "C:\\Games\\Fortnite.exe", "", GameCoverLoader.DemoCoverUrl("fortnite"), "Battle Royale"),
+                new("g6", "APEX", "C:\\Games\\Apex.exe", "", GameCoverLoader.DemoCoverUrl("apex"), "Battle Royale"),
+            });
+            return;
+        }
+
+        ApplyBootstrap(bootstrap.Value);
     }
 
     private static List<GameTileVm> ParseGameTiles(JsonElement data)
@@ -431,7 +527,23 @@ public sealed class MainViewModel : ObservableObject
             exe,
             item.TryGetProperty("launch_args", out var la) ? la.GetString() ?? "" : "",
             item.TryGetProperty("icon_url", out var iu) ? iu.GetString() : null,
+            item.TryGetProperty("icon_path", out var ip) ? ip.GetString() : null,
             item.TryGetProperty("category", out var cat) ? cat.GetString() : null);
+    }
+
+    private void RefreshSuperadminLibrary()
+    {
+        if (!Superadmin.Unlocked) return;
+        Superadmin.SetLibrary(Games.Items.Select(g => new SuperadminGameRowVm(g.GameId, g.Name, g.ExecutablePath)));
+    }
+
+    private static string ReadIpcStatus(JsonElement? result, string success, string fallback)
+    {
+        if (result is null) return "Could not reach agent — is PcAgent running?";
+        if (result.Value.TryGetProperty("ok", out var okEl) && okEl.GetBoolean()) return success;
+        return result.Value.TryGetProperty("error", out var errEl) && !string.IsNullOrWhiteSpace(errEl.GetString())
+            ? errEl.GetString()!
+            : fallback;
     }
 }
 
@@ -588,16 +700,29 @@ public sealed class SuperadminViewModel : ObservableObject
 {
     private string _password = "";
     private string _errorMessage = "";
+    private string _gamesStatus = "";
     private bool _isVisible;
     private bool _unlocked;
 
     public event Action<string>? VerifyRequested;
     public event Action<string>? MaintenanceActionRequested;
+    public event Func<Task>? ScanGamesRequested;
+    public event Func<string, Task>? AddShortcutRequested;
+    public event Func<string, Task>? RemoveGameRequested;
+    public event Func<string, string, Task>? SetThumbnailRequested;
+    public event Func<string, string, Task>? SetPathRequested;
+    public event Action? PickShortcutRequested;
+    public event Action<SuperadminGameRowVm>? PickThumbnailRequested;
+    public event Action<SuperadminGameRowVm>? PickPathRequested;
+
+    public ObservableCollection<SuperadminGameRowVm> Library { get; } = new();
 
     public string Password { get => _password; set => Set(ref _password, value); }
     public string ErrorMessage { get => _errorMessage; private set => Set(ref _errorMessage, value); }
+    public string GamesStatus { get => _gamesStatus; set => Set(ref _gamesStatus, value); }
     public bool IsVisible { get => _isVisible; private set => Set(ref _isVisible, value); }
     public bool Unlocked { get => _unlocked; private set => Set(ref _unlocked, value); }
+    public bool HasLibraryItems => Library.Count > 0;
 
     public RelayCommand ShowCommand { get; }
     public RelayCommand VerifyCommand { get; }
@@ -606,6 +731,11 @@ public sealed class SuperadminViewModel : ObservableObject
     public RelayCommand RestartCommand { get; }
     public RelayCommand ShutdownCommand { get; }
     public RelayCommand ExitSuperadminCommand { get; }
+    public RelayCommand ScanGamesCommand { get; }
+    public RelayCommand AddShortcutCommand { get; }
+    public RelayCommand RemoveGameCommand { get; }
+    public RelayCommand UploadThumbnailCommand { get; }
+    public RelayCommand SetPathCommand { get; }
 
     public SuperadminViewModel()
     {
@@ -621,6 +751,38 @@ public sealed class SuperadminViewModel : ObservableObject
         RestartCommand = new RelayCommand(_ => MaintenanceActionRequested?.Invoke("restart"), _ => Unlocked);
         ShutdownCommand = new RelayCommand(_ => MaintenanceActionRequested?.Invoke("shutdown"), _ => Unlocked);
         ExitSuperadminCommand = new RelayCommand(_ => Close());
+        ScanGamesCommand = new RelayCommand(async _ =>
+        {
+            if (ScanGamesRequested is null) return;
+            await ScanGamesRequested();
+        }, _ => Unlocked);
+        AddShortcutCommand = new RelayCommand(_ => PickShortcutRequested?.Invoke(), _ => Unlocked);
+        RemoveGameCommand = new RelayCommand(async p =>
+        {
+            if (p is not SuperadminGameRowVm row || RemoveGameRequested is null) return;
+            await RemoveGameRequested(row.GameId);
+        }, _ => Unlocked);
+        UploadThumbnailCommand = new RelayCommand(p =>
+        {
+            if (p is SuperadminGameRowVm row) PickThumbnailRequested?.Invoke(row);
+        }, _ => Unlocked);
+        SetPathCommand = new RelayCommand(p =>
+        {
+            if (p is SuperadminGameRowVm row) PickPathRequested?.Invoke(row);
+        }, _ => Unlocked);
+    }
+
+    public Task SubmitThumbnailAsync(string gameId, string imagePath) =>
+        SetThumbnailRequested?.Invoke(gameId, imagePath) ?? Task.CompletedTask;
+
+    public Task SubmitPathAsync(string gameId, string shortcutPath) =>
+        SetPathRequested?.Invoke(gameId, shortcutPath) ?? Task.CompletedTask;
+
+    public void SetLibrary(IEnumerable<SuperadminGameRowVm> items)
+    {
+        Library.Clear();
+        items.ToList().ForEach(Library.Add);
+        OnPropertyChanged(nameof(HasLibraryItems));
     }
 
     public void Show()
@@ -628,11 +790,20 @@ public sealed class SuperadminViewModel : ObservableObject
         IsVisible = true;
         Password = "";
         ErrorMessage = "";
+        GamesStatus = "";
     }
 
-    public void Close() => IsVisible = false;
+    public void Close()
+    {
+        IsVisible = false;
+        Unlocked = false;
+        Password = "";
+    }
 
-    public void OnVerifyResult(bool ok)
+    public Task SubmitShortcutAsync(string path) =>
+        AddShortcutRequested?.Invoke(path) ?? Task.CompletedTask;
+
+    public void OnVerifyResult(bool ok, string? errorMessage = null)
     {
         if (ok)
         {
@@ -641,8 +812,17 @@ public sealed class SuperadminViewModel : ObservableObject
         }
         else
         {
-            ErrorMessage = "ACCESS DENIED — attempt logged";
+            ErrorMessage = string.IsNullOrWhiteSpace(errorMessage)
+                ? "ACCESS DENIED — attempt logged"
+                : errorMessage;
             Password = "";
         }
     }
+}
+
+public sealed class SuperadminGameRowVm(string gameId, string name, string executablePath)
+{
+    public string GameId { get; } = gameId;
+    public string Name { get; } = name;
+    public string ExecutablePath { get; } = executablePath;
 }

@@ -4,12 +4,10 @@
     <Grid VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="560">
         <Border Style="{StaticResource PanelCard}" Padding="40,36" MinWidth="420">
                 <StackPanel>
-                    <TextBlock Text="SESSION PASS" FontFamily="{StaticResource Font.Display}"
-                               Foreground="{StaticResource Brush.Text}" FontSize="28"
-                               FontWeight="Bold" Margin="0,0,0,8" />
-                    <TextBlock Text="Your play time at this station."
-                               Foreground="{StaticResource Brush.TextMuted}" FontSize="15"
-                               Margin="0,0,0,28" />
+                    <TextBlock Text="Session details" Style="{StaticResource PageTitle}" FontSize="22"
+                               Margin="0,0,0,4" />
+                    <TextBlock Text="Time and station information." Style="{StaticResource PageSubtitle}"
+                               Margin="0,0,0,24" />
 
                 <Grid Margin="0,0,0,8">
                     <Grid.ColumnDefinitions>
@@ -22,19 +20,19 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Station"
-                               Foreground="{StaticResource Brush.TextFaint}" FontSize="13" FontWeight="SemiBold" />
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Station" Style="{StaticResource SectionLabel}" />
                     <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding PcName}"
-                               Foreground="{StaticResource Brush.Text}" FontSize="17" Margin="0,0,0,14" />
+                               FontFamily="{StaticResource Font.Display}"
+                               Foreground="{StaticResource Brush.Text}" FontSize="18" Margin="0,0,0,14" />
 
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Started"
-                               Foreground="{StaticResource Brush.TextFaint}" FontSize="13" FontWeight="SemiBold" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Started" Style="{StaticResource SectionLabel}" />
                     <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding StartedAt}"
+                               FontFamily="{StaticResource Font.Mono}"
                                Foreground="{StaticResource Brush.Text}" FontSize="17" Margin="0,0,0,14" />
 
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Ends"
-                               Foreground="{StaticResource Brush.TextFaint}" FontSize="13" FontWeight="SemiBold" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Ends" Style="{StaticResource SectionLabel}" />
                     <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding ExpiresAt}"
+                               FontFamily="{StaticResource Font.Mono}"
                                Foreground="{StaticResource Brush.Text}" FontSize="17" />
                 </Grid>
 

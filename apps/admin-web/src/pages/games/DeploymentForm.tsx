@@ -31,6 +31,8 @@ export function DeploymentForm({
   onToggleTarget: (pcId: string) => void;
   onSubmit: (event: FormEvent) => void;
 }) {
+  const versions = games.find((game) => game.id === gameId)?.versions ?? [];
+
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
       <h2 className="flex items-center gap-2 text-sm font-medium text-zinc-400">
@@ -55,12 +57,18 @@ export function DeploymentForm({
           </label>
           <label className="block text-xs text-zinc-400">
             Target version
-            <input
+            <select
               value={versionId}
               onChange={(e) => onVersionIdChange(e.target.value)}
-              placeholder="version id or label"
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-emerald-500"
-            />
+              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500"
+            >
+              <option value="">Select version…</option>
+              {versions.map((version) => (
+                <option key={version.id} value={version.id}>
+                  {version.version} ({version.status})
+                </option>
+              ))}
+            </select>
           </label>
         </div>
         <label className="block text-xs text-zinc-400">

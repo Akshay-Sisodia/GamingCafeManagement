@@ -5,6 +5,8 @@ using System.Net.Http.Headers;
 using PcAgent.Core;
 using PcAgent.Core.Api;
 using PcAgent.Core.Commands;
+using PcAgent.Core.Games;
+using PcAgent.Games;
 using PcAgent.Core.Health;
 using PcAgent.Core.Ipc;
 using PcAgent.Core.Launcher;
@@ -48,7 +50,10 @@ public sealed class AgentWorker : BackgroundService
     private bool _timerPushLogged;
     private long _lastServerTimeMs;
     private CancellationTokenSource _lifetime = new();
+    private GameLibraryService? _gameLibrary;
     private List<LauncherGameDto> _launcherGames = new();
+    private readonly string _ipcToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+    private readonly object _launcherGamesGate = new();
 
     public AgentWorker(AgentOptions options, ILogger<AgentWorker> logger)
     {
@@ -62,9 +67,18 @@ public sealed class AgentWorker : BackgroundService
         Directory.CreateDirectory(_options.DataDirectory);
         var dbPath = Path.Combine(_options.DataDirectory, "agent.db");
         _db = new AgentDatabase(dbPath);
+        _gameLibrary = new GameLibraryService(_db, _options.DataDirectory, msg => _logger.LogInformation("{Msg}", msg));
+        var discovered = _gameLibrary.ImportDiscovered(onlyNew: true);
+        var pruned = _gameLibrary.PruneNonGames();
+        _logger.LogInformation("games: boot scan added {Added} new title(s), pruned {Pruned}", discovered, pruned);
+        ReloadLocalGames();
         _clock = new TrustedClock();
         _outbox = new OutboxService(_db);
         _processes = new ProcessController(msg => _logger.LogInformation("process: {Msg}", msg));
+        _processes.TrackedProcessesChanged += () =>
+        {
+            if (_processes.TrackedRunningCount() == 0) _gamingMode = false;
+        };
         _health = new HealthReporter();
 
         // Token is stored DPAPI-protected (see PairIfNeededAsync) — unprotect on boot.
@@ -113,12 +127,21 @@ public sealed class AgentWorker : BackgroundService
             () => ResetRateLimit(scope0: "superadmin"),
             (action, meta) =>
             {
-                _outbox.Enqueue(action, JsonSerializer.SerializeToElement(new { action, metadata = JsonDocument.Parse(meta).RootElement.Clone() }));
+                using var doc = JsonDocument.Parse(meta);
+                _outbox.Enqueue(action, JsonSerializer.SerializeToElement(new { action, metadata = doc.RootElement.Clone() }));
                 _db.ExecuteNonQuery(
                     "INSERT OR IGNORE INTO audit_pending(event_id, action, occurred_at, metadata) VALUES($id,$a,$at,$m)",
                     ("$id", Guid.CreateVersion7().ToString()), ("$a", action), ("$at", DateTimeOffset.UtcNow.ToString("O")), ("$m", meta));
             },
             msg => _logger.LogInformation("superadmin: {Msg}", msg));
+
+        if (_options.AllowDevSuperadminProvisioner &&
+            !_superadmin.HasVerifier() &&
+            string.Equals(Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"), "Development", StringComparison.OrdinalIgnoreCase))
+        {
+            _superadmin.SetVerifier(SuperadminService.CreateVerifier("Password123!"), []);
+            _logger.LogInformation("superadmin: dev local verifier provisioned (Password123!)");
+        }
 
         _sync = new SyncEngine(
             _outbox,
@@ -135,7 +158,7 @@ public sealed class AgentWorker : BackgroundService
             catch (Exception ex) { _logger.LogDebug("initial bootstrap sync: {Msg}", ex.Message); }
         }
 
-        _supervisor = new LauncherSupervisor(_options.LauncherPath,
+        _supervisor = new LauncherSupervisor(_options.LauncherPath, _ipcToken,
             msg => _logger.LogInformation("launcher: {Msg}", msg));
         if (File.Exists(_options.LauncherPath))
         {
@@ -363,25 +386,22 @@ public sealed class AgentWorker : BackgroundService
             case "command":
                 {
                     using var doc = JsonDocument.Parse(ev.Data);
-                    _ = Task.Run(async () =>
+                    var command = doc.RootElement.Clone();
+                    try
                     {
-                        try
-                        {
-                            var command = doc.RootElement.Clone();
-                            var handler = new CommandHandler(
-                                _sessions!,
-                                _processes!,
-                                () => Task.CompletedTask,
-                                ackApplied: id => _api!.AckCommandAsync(_deviceToken!, _pcId!, id, "applied", null, CancellationToken.None),
-                                ackFailed: (id, code) => _api!.AckCommandAsync(_deviceToken!, _pcId!, id, "failed", code, CancellationToken.None),
-                                log: msg => _logger.LogInformation("command: {Msg}", msg));
-                            await handler.HandleAsync(command, CancellationToken.None);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "command handling failed");
-                        }
-                    });
+                        var handler = new CommandHandler(
+                            _sessions!,
+                            _processes!,
+                            () => Task.CompletedTask,
+                            ackApplied: id => _api!.AckCommandAsync(_deviceToken!, _pcId!, id, "applied", null, CancellationToken.None),
+                            ackFailed: (id, code) => _api!.AckCommandAsync(_deviceToken!, _pcId!, id, "failed", code, CancellationToken.None),
+                            log: msg => _logger.LogInformation("command: {Msg}", msg));
+                        handler.HandleAsync(command, CancellationToken.None).GetAwaiter().GetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "command handling failed");
+                    }
                     break;
                 }
             case "session.updated":
@@ -418,23 +438,30 @@ public sealed class AgentWorker : BackgroundService
     {
         if (status == "active")
         {
+            _sessions!.SetPaused(false);
             if (_sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
             {
-                // Align expiry with the server (covers remote extends).
-                var localRemaining = _sessions.RemainingSeconds();
-                var serverRemaining = (int)Math.Max(0, (expiresEffMs - _clock!.EffectiveNowMs()) / 1000);
-                var deltaMinutes = (int)Math.Round((serverRemaining - localRemaining) / 60.0);
-                if (deltaMinutes > 0)
+                var localExpires = _sessions.ExpiresEffMs() ?? 0;
+                if (Math.Abs(expiresEffMs - localExpires) > 3000)
                 {
-                    _sessions.Extend(deltaMinutes, suppressOutboxEcho: true);
-                    _logger.LogInformation("adopted remote extension (+{Min}m)", deltaMinutes);
+                    _sessions.SetExpiresEffMs(expiresEffMs, suppressOutboxEcho: true);
+                    var remainingSec = Math.Max(0, (expiresEffMs - _clock!.EffectiveNowMs()) / 1000);
+                    _logger.LogInformation("aligned session expiry with server ({Sec}s remaining)", remainingSec);
                 }
             }
             else
             {
-                var remainingMin = (int)Math.Max(1, (expiresEffMs - _clock!.EffectiveNowMs()) / 60000);
-                _sessions.StartSession(remainingMin, "admin", null, suppressOutboxEcho: true);
-                _logger.LogInformation("adopted cloud session ({Min}m)", remainingMin);
+                _sessions!.StartSession(0, "admin", null, suppressOutboxEcho: true, expiresEffMs: expiresEffMs);
+                var remainingSec = Math.Max(0, (expiresEffMs - _clock!.EffectiveNowMs()) / 1000);
+                _logger.LogInformation("adopted cloud session ({Sec}s remaining)", remainingSec);
+            }
+        }
+        else if (status == "paused")
+        {
+            if (_sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
+            {
+                _sessions.SetPaused(true);
+                _logger.LogInformation("adopted remote session pause");
             }
         }
         else if (status is "ended" or "cancelled" or "expired")
@@ -454,11 +481,12 @@ public sealed class AgentWorker : BackgroundService
         if (_ipc is null || _sessions is null) return;
 
         var active = _sessions.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring;
+        var paused = _sessions.IsPaused;
         var remaining = active ? _sessions.RemainingSeconds() : 0;
 
         await _ipc.PushAsync("session", JsonSerializer.SerializeToElement(new
         {
-            state = active ? "active" : "none",
+            state = paused ? "paused" : active ? "active" : "none",
             expires_at = active
                 ? DateTimeOffset.FromUnixTimeMilliseconds(_sessions.ExpiresEffMs() ?? 0).ToString("O")
                 : null,
@@ -468,54 +496,40 @@ public sealed class AgentWorker : BackgroundService
             new { remaining_seconds = remaining }));
     }
 
-    private void ApplyGamesFromBootstrap(JsonElement bootstrap)
+    private void ReloadLocalGames()
     {
-        if (!bootstrap.TryGetProperty("games", out var rows) || rows.ValueKind != JsonValueKind.Array)
-            return;
-
-        var list = rows.EnumerateArray()
-            .Select(ParseLauncherGame)
-            .Where(g => g is not null)
-            .Cast<LauncherGameDto>()
+        var loaded = _gameLibrary!.Load();
+        var next = loaded
+            .Where(g => File.Exists(g.ExecutablePath))
+            .Select(g => new LauncherGameDto(
+                g.Id, g.Name, g.ExecutablePath, g.LaunchArgs, g.IconUrl, g.IconPath, g.Category))
             .ToList();
-        if (list.Count == 0) return;
-
-        _launcherGames = list;
-        _ = PushGamesToLauncherAsync();
-    }
-
-    private static LauncherGameDto? ParseLauncherGame(JsonElement row)
-    {
-        if (!row.TryGetProperty("game", out var game)) return null;
-
-        var exe = game.TryGetProperty("executable_path", out var ep) ? ep.GetString() : null;
-        if (row.TryGetProperty("installation", out var inst) && inst.ValueKind == JsonValueKind.Object &&
-            inst.TryGetProperty("install_path", out var ip) && !string.IsNullOrWhiteSpace(ip.GetString()))
+        lock (_launcherGamesGate)
         {
-            exe = ip.GetString();
+            _launcherGames = next;
         }
-        if (string.IsNullOrWhiteSpace(exe)) return null;
-
-        return new LauncherGameDto(
-            game.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
-            game.TryGetProperty("name", out var n) ? n.GetString() ?? "Game" : "Game",
-            exe,
-            game.TryGetProperty("launch_args", out var la) ? la.GetString() ?? "" : "",
-            game.TryGetProperty("icon_url", out var icon) ? icon.GetString() : null,
-            game.TryGetProperty("category", out var cat) ? cat.GetString() : null);
+        _logger.LogInformation(
+            "games: loaded {Count} titles from {Path}",
+            next.Count,
+            _gameLibrary.Store.ConfigPath);
+        _ = PushGamesToLauncherAsync();
     }
 
     private async Task PushGamesToLauncherAsync()
     {
-        if (_ipc is null || _launcherGames.Count == 0) return;
+        if (_ipc is null) return;
 
-        var items = _launcherGames.Select(g => new
+        List<LauncherGameDto> snapshot;
+        lock (_launcherGamesGate) snapshot = _launcherGames.ToList();
+
+        var items = snapshot.Select(g => new
         {
             game_id = g.Id,
             name = g.Name,
             executable_path = g.ExecutablePath,
             launch_args = g.LaunchArgs,
             icon_url = g.IconUrl,
+            icon_path = g.IconPath,
             category = g.Category,
         }).ToList();
 
@@ -528,6 +542,7 @@ public sealed class AgentWorker : BackgroundService
         string ExecutablePath,
         string LaunchArgs,
         string? IconUrl,
+        string? IconPath,
         string? Category);
 
     /// <summary>
@@ -563,8 +578,6 @@ public sealed class AgentWorker : BackgroundService
                 _gamingMode = false;
                 _logger.LogInformation("cleared local session after server bootstrap reset");
             }
-
-            ApplyGamesFromBootstrap(bootstrap);
         }
         catch (Exception ex)
         {
@@ -577,29 +590,35 @@ public sealed class AgentWorker : BackgroundService
     private void StartIpc()
     {
         _ipc = new IpcServer(async (req, ct) =>
-        {            switch (req.Method)
+        {
+            if (!ValidateIpcToken(req)) return new { ok = false, error = "unauthorized_ipc" };
+
+            switch (req.Method)
             {
                 case "bootstrap":
                     {
                         var active = _sessions!.CurrentState is LocalSessionState.Active or LocalSessionState.Expiring;
+                        List<LauncherGameDto> gamesSnapshot;
+                        lock (_launcherGamesGate) gamesSnapshot = _launcherGames.ToList();
                         return new Dictionary<string, object?>
                         {
                             ["pc_id"] = _pcId,
                             ["session"] = active
                                 ? new
                                 {
-                                    state = "active",
+                                    state = _sessions.IsPaused ? "paused" : "active",
                                     expires_at = DateTimeOffset.FromUnixTimeMilliseconds(_sessions.ExpiresEffMs() ?? 0).ToString("O"),
                                     remaining_seconds = _sessions.RemainingSeconds(),
                                 }
                                 : new { state = "none" },
-                            ["games"] = _launcherGames.Select(g => new
+                            ["games"] = gamesSnapshot.Select(g => new
                             {
                                 game_id = g.Id,
                                 name = g.Name,
                                 executable_path = g.ExecutablePath,
                                 launch_args = g.LaunchArgs,
                                 icon_url = g.IconUrl,
+                                icon_path = g.IconPath,
                                 category = g.Category,
                             }).ToList(),
                         };
@@ -607,20 +626,35 @@ public sealed class AgentWorker : BackgroundService
 
                 case "session.start":
                     {
-                        var minutes = req.Payload.TryGetProperty("planned_minutes", out var pm) ? pm.GetInt32() : 60;
-                        var localRef = _sessions!.StartSession(minutes, "launcher");
-                        return new { local_ref = localRef };
+                        await _sseEventGate.WaitAsync(ct);
+                        try
+                        {
+                            var minutes = req.Payload.TryGetProperty("planned_minutes", out var pm) ? pm.GetInt32() : 60;
+                            var localRef = _sessions!.StartSession(minutes, "launcher");
+                            return new { local_ref = localRef };
+                        }
+                        finally { _sseEventGate.Release(); }
                     }
 
                 case "session.extend":
-                    _sessions!.Extend(req.Payload.TryGetProperty("minutes", out var m) ? m.GetInt32() : 15);
-                    return new { ok = true };
+                    {
+                        await _sseEventGate.WaitAsync(ct);
+                        try
+                        {
+                            _sessions!.Extend(req.Payload.TryGetProperty("minutes", out var m) ? m.GetInt32() : 15);
+                            return new { ok = true };
+                        }
+                        finally { _sseEventGate.Release(); }
+                    }
 
                 case "game.launch":
                     {
+                        if (_sessions!.CurrentState is not (LocalSessionState.Active or LocalSessionState.Expiring))
+                            return new { ok = false, error = "no_active_session" };
                         var exe = req.Payload.TryGetProperty("executable_path", out var exeEl) ? exeEl.GetString() : null;
                         var args = req.Payload.TryGetProperty("launch_args", out var argsEl) ? argsEl.GetString() : null;
                         if (exe is null) throw new ArgumentException("missing executable_path");
+                        if (!File.Exists(exe)) throw new FileNotFoundException($"Game not installed on this PC: {exe}");
                         _processes!.LaunchTracked(exe, args);
                         _gamingMode = true;
                         return new { ok = true };
@@ -651,11 +685,111 @@ public sealed class AgentWorker : BackgroundService
                         var password = req.Payload.TryGetProperty("password", out var pw) ? pw.GetString() : null;
                         if (password is null) throw new ArgumentException("missing password");
 
-                        // Prefer online verification; fall back offline.
-                        var onlineOk = IsPaired() &&
-                            await _api!.VerifySuperadminOnlineAsync(_deviceToken!, _pcId!, password, ct);
-                        var ok = onlineOk || _superadmin!.VerifyOffline(password).Ok;
+                        var limit = CheckRateLimit("superadmin");
+                        if (!limit.Allowed)
+                            return new { ok = false, reason = "rate_limited", retry_after_s = limit.RetryAfterSeconds };
+
+                        if (IsPaired())
+                        {
+                            var onlineOk = await _api!.VerifySuperadminOnlineAsync(_deviceToken!, _pcId!, password, ct);
+                            if (onlineOk)
+                            {
+                                ResetRateLimit("superadmin");
+                                return new { ok = true, reason = "online" };
+                            }
+                            FailRateLimit("superadmin");
+                        }
+
+                        var offlineResult = _superadmin!.VerifyOffline(password);
+                        if (offlineResult.Ok)
+                            return new { ok = true, reason = "offline" };
+
+                        if (offlineResult.RetryAfterSeconds > 0)
+                            return new { ok = false, reason = "rate_limited", retry_after_s = offlineResult.RetryAfterSeconds };
+
+                        var reason = _superadmin.HasVerifier() ? "bad_password" : "no_verifier";
+                        return new { ok = false, reason };
+                    }
+
+                case "games.scan":
+                    {
+                        var items = _gameLibrary!.ScanInstalled()
+                            .Select(d => new
+                            {
+                                name = d.Name,
+                                executable_path = d.ExecutablePath,
+                                launch_args = d.LaunchArgs,
+                                source_path = d.SourcePath,
+                                category = d.Category,
+                                in_library = _gameLibrary.Store.HasExecutable(d.ExecutablePath),
+                            })
+                            .ToList();
+                        return new { items };
+                    }
+
+                case "games.import_discovered":
+                    {
+                        var added = _gameLibrary!.ImportDiscovered(onlyNew: true);
+                        var pruned = _gameLibrary.PruneNonGames();
+                        ReloadLocalGames();
+                        return new { added_count = added, pruned_count = pruned, total = _launcherGames.Count };
+                    }
+
+                case "games.add":
+                    {
+                        var path = req.Payload.TryGetProperty("shortcut_path", out var sp) ? sp.GetString() : null;
+                        var name = req.Payload.TryGetProperty("name", out var nm) ? nm.GetString() : null;
+                        if (path is null) throw new ArgumentException("missing shortcut_path");
+                        var game = _gameLibrary!.AddFromShortcut(path, name);
+                        ReloadLocalGames();
+                        return new { game_id = game.Id, name = game.Name, icon_path = game.IconPath };
+                    }
+
+                case "games.remove":
+                    {
+                        var gameId = req.Payload.TryGetProperty("game_id", out var gid) ? gid.GetString() : null;
+                        if (gameId is null) throw new ArgumentException("missing game_id");
+                        var ok = _gameLibrary!.Remove(gameId);
+                        ReloadLocalGames();
                         return new { ok };
+                    }
+
+                case "games.set_thumbnail":
+                    {
+                        var gameId = req.Payload.TryGetProperty("game_id", out var tid) ? tid.GetString() : null;
+                        var imagePath = req.Payload.TryGetProperty("image_path", out var ip) ? ip.GetString() : null;
+                        if (gameId is null) return new { ok = false, error = "missing game_id" };
+                        if (imagePath is null) return new { ok = false, error = "missing image_path" };
+                        try
+                        {
+                            var game = _gameLibrary!.SetThumbnail(gameId, imagePath);
+                            ReloadLocalGames();
+                            return new { ok = true, game_id = game.Id, icon_path = game.IconPath };
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("games.set_thumbnail failed: {Msg}", ex.Message);
+                            return new { ok = false, error = ex.Message };
+                        }
+                    }
+
+                case "games.set_path":
+                    {
+                        var gameId = req.Payload.TryGetProperty("game_id", out var pid) ? pid.GetString() : null;
+                        var path = req.Payload.TryGetProperty("shortcut_path", out var sp) ? sp.GetString() : null;
+                        if (gameId is null) return new { ok = false, error = "missing game_id" };
+                        if (path is null) return new { ok = false, error = "missing shortcut_path" };
+                        try
+                        {
+                            var game = _gameLibrary!.SetLaunchPath(gameId, path);
+                            ReloadLocalGames();
+                            return new { ok = true, game_id = game.Id, executable_path = game.ExecutablePath };
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("games.set_path failed: {Msg}", ex.Message);
+                            return new { ok = false, error = ex.Message };
+                        }
                     }
 
                 case "maintenance.action":
@@ -681,8 +815,8 @@ public sealed class AgentWorker : BackgroundService
         _ipc.ClientConnected += async () =>
         {
             _timerPushLogged = false;
+            ReloadLocalGames();
             await PushSessionStateToLauncherAsync();
-            await PushGamesToLauncherAsync();
         };
 
         _ipc.Start();
@@ -752,6 +886,13 @@ public sealed class AgentWorker : BackgroundService
 
     // ponytail: rate-limit DB helpers stay here — SuperadminService already delegates via callbacks;
     // moving SQL into the service would just duplicate AgentDatabase access patterns.
+
+    private bool ValidateIpcToken(IpcRequest req)
+    {
+        if (!req.Payload.TryGetProperty("ipc_token", out var tokenEl)) return false;
+        var token = tokenEl.GetString();
+        return !string.IsNullOrWhiteSpace(token) && token == _ipcToken;
+    }
 
     private SuperadminService.RateLimitDecision CheckRateLimit(string scope)
     {

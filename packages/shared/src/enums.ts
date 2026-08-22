@@ -46,6 +46,7 @@ export type DeploymentTargetState =
 export type SessionStatus =
   | "scheduled"
   | "active"
+  | "paused"
   | "expired"
   | "ended"
   | "cancelled";

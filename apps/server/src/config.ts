@@ -19,6 +19,14 @@ const envSchema = z.object({
 
 const parsed = envSchema.parse(process.env);
 
+const DEV_JWT_SECRET = "dev-secret-change-me";
+const isProduction =
+  process.env.NODE_ENV === "production" || process.env.NODE_ENV === "prod";
+
+if (isProduction && (parsed.JWT_SECRET === DEV_JWT_SECRET || parsed.JWT_SECRET.length < 32)) {
+  throw new Error("JWT_SECRET must be set to a strong value in production");
+}
+
 export const config = {
   DATABASE_URL: parsed.DATABASE_URL,
   REDIS_URL: parsed.REDIS_URL,
@@ -26,6 +34,7 @@ export const config = {
   PORT: parsed.PORT,
   LOG_LEVEL: parsed.LOG_LEVEL,
   SINGLE_PROCESS: parsed.SINGLE_PROCESS,
+  IS_PRODUCTION: isProduction,
   CORS_ORIGINS: parsed.CORS_ORIGINS.split(",")
     .map((s) => s.trim())
     .filter(Boolean),

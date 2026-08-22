@@ -2,7 +2,7 @@ import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { FastifyRequest } from "fastify";
 import { db } from "../../db/index.js";
-import { customers, sessions } from "../../db/schema.js";
+import { customers, loyaltyAccounts, sessions, walletTransactions, wallets } from "../../db/schema.js";
 import { parseBody, problem } from "../../lib/problem.js";
 import { writeAudit } from "../audit/service.js";
 
@@ -23,20 +23,36 @@ export async function handleListCustomers(req: FastifyRequest) {
     : eq(customers.cafeId, user.cafe_id);
 
   const rows = await db
-    .select()
+    .select({
+      customer: customers,
+      walletBalance: sql<number | null>`(
+        select coalesce(wt.balance_after, 0)::bigint
+        from ${walletTransactions} wt
+        inner join ${wallets} w on w.id = wt.wallet_id
+        where w.customer_id = ${customers.id}
+        order by wt.created_at desc
+        limit 1
+      )`,
+      loyaltyPoints: sql<number | null>`(
+        select coalesce(${loyaltyAccounts.pointsBalance}, 0)::bigint
+        from ${loyaltyAccounts}
+        where ${loyaltyAccounts.customerId} = ${customers.id}
+        limit 1
+      )`,
+    })
     .from(customers)
     .where(where)
     .orderBy(desc(customers.createdAt))
     .limit(200);
 
-  return rows.map((c) => ({
-    id: c.id,
-    name: c.name,
-    email: c.email,
-    phone: c.phone,
-    wallet_balance: 0,
-    loyalty_points: 0,
-    created_at: c.createdAt?.toISOString() ?? null,
+  return rows.map((r) => ({
+    id: r.customer.id,
+    name: r.customer.name,
+    email: r.customer.email,
+    phone: r.customer.phone,
+    wallet_balance: Number(r.walletBalance ?? 0),
+    loyalty_points: Number(r.loyaltyPoints ?? 0),
+    created_at: r.customer.createdAt?.toISOString() ?? null,
   }));
 }
 
@@ -61,6 +77,20 @@ export async function handleCreateCustomer(req: FastifyRequest) {
     passwordHash = await hash(input.password);
   }
 
+  const existing = await db
+    .select({ id: customers.id })
+    .from(customers)
+    .where(
+      and(
+        eq(customers.cafeId, user.cafe_id),
+        input.email
+          ? sql`lower(${customers.email}) = ${input.email.toLowerCase()}`
+          : eq(customers.phone, input.phone!),
+      ),
+    )
+    .limit(1);
+  if (existing[0]) throw problem(409, "Conflict", "CUSTOMER_EXISTS");
+
   const inserted = await db
     .insert(customers)
     .values({
@@ -71,10 +101,8 @@ export async function handleCreateCustomer(req: FastifyRequest) {
       authMethod: input.password ? "password" : "none",
       passwordHash,
     })
-    .onConflictDoNothing()
     .returning();
-  const customer = inserted[0];
-  if (!customer) throw problem(409, "Conflict", "CUSTOMER_EXISTS");
+  const customer = inserted[0]!;
 
   await writeAudit(db, {
     cafeId: user.cafe_id,

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -7,12 +8,12 @@ namespace GamingLauncher.Services;
 public static class GameCoverLoader
 {
     private static readonly Brush[] FallbackGradients = [
-        MakeGradient("#00D9FF", "#7C3AED"),
-        MakeGradient("#FF4D9D", "#FF6B35"),
-        MakeGradient("#22D3EE", "#0EA5E9"),
-        MakeGradient("#A855F7", "#EC4899"),
-        MakeGradient("#34D399", "#059669"),
-        MakeGradient("#F59E0B", "#EF4444"),
+        MakeSolid("#2A2A2E"),
+        MakeSolid("#252528"),
+        MakeSolid("#303035"),
+        MakeSolid("#1F1F23"),
+        MakeSolid("#35353A"),
+        MakeSolid("#2C2C31"),
     ];
 
     public static Brush FallbackBrush(string name)
@@ -27,6 +28,7 @@ public static class GameCoverLoader
     public static Task<ImageSource?> LoadAsync(string? url)
     {
         if (string.IsNullOrWhiteSpace(url)) return Task.FromResult<ImageSource?>(null);
+        if (File.Exists(url)) return LoadFromFileAsync(url);
 
         var tcs = new TaskCompletionSource<ImageSource?>();
         Application.Current?.Dispatcher.InvokeAsync(() =>
@@ -49,6 +51,36 @@ public static class GameCoverLoader
             }
         });
         return tcs.Task;
+    }
+
+    private static Task<ImageSource?> LoadFromFileAsync(string path)
+    {
+        var tcs = new TaskCompletionSource<ImageSource?>();
+        Application.Current?.Dispatcher.InvokeAsync(() =>
+        {
+            try
+            {
+                var image = new BitmapImage();
+                image.BeginInit();
+                image.UriSource = new Uri(Path.GetFullPath(path), UriKind.Absolute);
+                image.CacheOption = BitmapCacheOption.OnLoad;
+                image.EndInit();
+                image.Freeze();
+                tcs.TrySetResult(image);
+            }
+            catch
+            {
+                tcs.TrySetResult(null);
+            }
+        });
+        return tcs.Task;
+    }
+
+    private static Brush MakeSolid(string color)
+    {
+        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color)!);
+        brush.Freeze();
+        return brush;
     }
 
     private static Brush MakeGradient(string a, string b)

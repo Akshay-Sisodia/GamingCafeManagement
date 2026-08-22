@@ -33,6 +33,11 @@ public sealed class SessionEngine
     private readonly Action<string> _log;
 
     private readonly HashSet<int> _firedWarnings = new();
+    private bool _paused;
+
+    public bool IsPaused => _paused;
+
+    public void SetPaused(bool paused) => _paused = paused;
 
     public event Action<LocalSessionState>? StateChanged;
     public event Action<SessionWarningRaised>? WarningRaised;
@@ -84,7 +89,12 @@ public sealed class SessionEngine
         }
     }
 
-    public string StartSession(int plannedMinutes, string origin, string? serverSessionId = null, bool suppressOutboxEcho = false)
+    public string StartSession(
+        int plannedMinutes,
+        string origin,
+        string? serverSessionId = null,
+        bool suppressOutboxEcho = false,
+        long? expiresEffMs = null)
     {
         if (CurrentState is LocalSessionState.Active or LocalSessionState.Expiring)
         {
@@ -95,7 +105,7 @@ public sealed class SessionEngine
         // the same millisecond would collide on the unique local_ref).
         var localRef = $"ls-{Convert.ToHexString(Guid.CreateVersion7().ToByteArray())[^8..].ToLowerInvariant()}";
         var startMs = _clock.EffectiveNowMs();
-        var expiresMs = startMs + plannedMinutes * 60_000L;
+        var expiresMs = expiresEffMs ?? startMs + plannedMinutes * 60_000L;
 
         _db.ExecuteNonQuery(
             """
@@ -143,6 +153,27 @@ public sealed class SessionEngine
         SetState(LocalSessionState.Active, row.LocalRef);
     }
 
+    /// <summary>Sets absolute expiry from the server (covers extend, shrink, and drift).</summary>
+    public void SetExpiresEffMs(long expiresEffMs, bool suppressOutboxEcho = false)
+    {
+        var row = LoadActive() ?? throw new InvalidOperationException("No active session");
+        if (row.ExpiresMs == expiresEffMs) return;
+
+        _db.ExecuteNonQuery(
+            "UPDATE sessions_local SET expires_eff_ms = $exp WHERE local_ref = $ref",
+            ("$exp", expiresEffMs), ("$ref", row.LocalRef));
+        if (!suppressOutboxEcho)
+        {
+            _outbox.Enqueue("SESSION_EXTENDED", JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+            {
+                ["local_session_ref"] = row.LocalRef,
+                ["expires_eff_ms"] = expiresEffMs,
+            }));
+        }
+        _firedWarnings.Clear();
+        SetState(LocalSessionState.Active, row.LocalRef);
+    }
+
     public void End(string reason, bool suppressOutboxEcho = false)
     {
         var row = LoadActive();
@@ -165,6 +196,7 @@ public sealed class SessionEngine
     /// <summary>Called once per second by the host loop.</summary>
     public void Tick()
     {
+        if (_paused) return;
         if (CurrentState is not (LocalSessionState.Active or LocalSessionState.Expiring)) return;
         var row = LoadActive();
         if (row is null) return;
@@ -194,6 +226,7 @@ public sealed class SessionEngine
     {
         var row = LoadActive();
         if (row is null) return 0;
+        if (_paused) return (int)Math.Max(0, (row.ExpiresMs - _clock.EffectiveNowMs()) / 1000);
         return (int)Math.Max(0, (row.ExpiresMs - _clock.EffectiveNowMs()) / 1000);
     }
 

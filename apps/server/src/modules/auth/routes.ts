@@ -8,11 +8,13 @@ import {
   handleMe,
   handlePairingCode,
   handleRefresh,
+  handleSseToken,
 } from "./handlers.js";
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post("/auth/login", handleLogin);
   app.post("/auth/refresh", handleRefresh);
+  app.post("/auth/sse-token", { preHandler: requireUser() }, handleSseToken);
   app.post("/auth/devices/pair", handleDevicePair);
   app.post(
     "/pcs/:id/pairing-code",

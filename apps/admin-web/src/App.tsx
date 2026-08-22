@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import type { ReactElement } from "react";
-import { auth } from "./lib/api";
+import { useEffect, useState } from "react";
+import { auth, validateSession } from "./lib/api";
 import { ToastProvider } from "./components/Toasts";
 import { Shell } from "./components/Shell";
 import { LoginPage } from "./pages/LoginPage";
@@ -14,13 +15,24 @@ import { CustomersPage } from "./pages/CustomersPage";
 import { AuditPage } from "./pages/AuditPage";
 import { ConflictsPage } from "./pages/ConflictsPage";
 import { KitchenPage } from "./pages/KitchenPage";
+import { LoadingBlock } from "./components/Spinner";
 
 function RequireAuth({ children }: { children: ReactElement }) {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (!auth.token()) {
+      setReady(true);
+      return;
+    }
+    void validateSession().finally(() => setReady(true));
+  }, []);
+
+  if (!ready) return <LoadingBlock />;
   if (!auth.token()) return <Navigate to="/login" replace />;
   return children;
 }
 
-/** Route-level RBAC: hide internal screens from kitchen accounts. */
 const STAFF_ROLES = ["owner", "manager", "staff"];
 
 function RequireRole({ roles, children }: { roles: string[]; children: ReactElement }) {

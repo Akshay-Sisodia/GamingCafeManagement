@@ -5,7 +5,7 @@ import { StaffOrderCard } from "./orders/StaffOrderCard";
 import { useOrdersPage } from "./orders/useOrdersPage";
 
 export function OrdersPage() {
-  const { ordersQuery, cancelOrder, cancelTarget, setCancelTarget, orders } = useOrdersPage();
+  const { ordersQuery, cancelOrder, act, cancelTarget, setCancelTarget, orders } = useOrdersPage();
 
   if (ordersQuery.isLoading) return <LoadingBlock />;
   if (ordersQuery.isError) {
@@ -29,7 +29,9 @@ export function OrdersPage() {
               key={order.id}
               order={order}
               cancelPending={cancelOrder.isPending}
+              actionPending={act.isPending}
               onCancel={setCancelTarget}
+              onAction={(orderId, action) => act.mutate({ orderId, action })}
             />
           ))}
         </div>

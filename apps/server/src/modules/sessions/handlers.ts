@@ -83,7 +83,7 @@ export async function handleExtendSession(req: FastifyRequest) {
 export function makeTerminalTransitionHandler(
   event: "ended" | "cancelled" | "paused" | "resumed",
   auditAction: string,
-  apply: "end" | "cancel" | "none",
+  apply: "end" | "cancel" | "pause" | "resume" | "none",
 ) {
   return async (req: FastifyRequest) => {
     const user = req.user!;
@@ -97,6 +97,13 @@ export function makeTerminalTransitionHandler(
       if (TERMINAL_STATUSES.includes(session.status)) {
         throw problem(409, "Conflict", "SESSION_ALREADY_TERMINAL");
       }
+      if (apply === "pause" && session.status !== "active") {
+        throw problem(409, "Conflict", "SESSION_NOT_ACTIVE");
+      }
+      if (apply === "resume" && session.status !== "paused") {
+        throw problem(409, "Conflict", "SESSION_NOT_PAUSED");
+      }
+
       let next = session;
       if (apply === "end") {
         const result = await tx
@@ -109,6 +116,20 @@ export function makeTerminalTransitionHandler(
         const result = await tx
           .update(sessions)
           .set({ status: "cancelled", endedAt: new Date() })
+          .where(eq(sessions.id, id))
+          .returning();
+        next = result[0]!;
+      } else if (apply === "pause") {
+        const result = await tx
+          .update(sessions)
+          .set({ status: "paused" })
+          .where(eq(sessions.id, id))
+          .returning();
+        next = result[0]!;
+      } else if (apply === "resume") {
+        const result = await tx
+          .update(sessions)
+          .set({ status: "active" })
           .where(eq(sessions.id, id))
           .returning();
         next = result[0]!;
@@ -166,7 +187,7 @@ export async function handlePcSession(req: FastifyRequest) {
       and(
         eq(sessions.pcId, pcId),
         eq(sessions.cafeId, user.cafe_id),
-        inArray(sessions.status, ["active", "scheduled"]),
+        inArray(sessions.status, ["active", "scheduled", "paused"]),
       ),
     )
     .orderBy(desc(sessions.startedAt))

@@ -1,19 +1,37 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { API, auth } from "../../lib/api";
+import { API, auth, fetchSseToken } from "../../lib/api";
 import { useSSE } from "../../hooks/useSSE";
 
 export function useShellRealtime() {
   const queryClient = useQueryClient();
   const user = auth.user();
-  const token = auth.token();
+  const [sseToken, setSseToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user || !auth.token()) {
+      setSseToken(null);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      const token = await fetchSseToken();
+      if (!cancelled) setSseToken(token);
+    };
+    void refresh();
+    const interval = setInterval(() => void refresh(), 4 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [user?.id, user?.cafe_id]);
 
   const sseUrl = useMemo(
     () =>
-      user && token
-        ? `${API}/v1/realtime/admin?cafe=${encodeURIComponent(user.cafe_id)}&token=${encodeURIComponent(token)}`
+      user && sseToken
+        ? `${API}/v1/realtime/admin?cafe=${encodeURIComponent(user.cafe_id)}&token=${encodeURIComponent(sseToken)}`
         : null,
-    [user, token],
+    [user, sseToken],
   );
   const { connected, subscribe } = useSSE(sseUrl);
 

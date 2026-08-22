@@ -51,7 +51,11 @@ public sealed class SuperadminService
         _log("superadmin verifier updated");
     }
 
-    public bool HasVerifier() => _db.GetMeta(VerifierKey) is not null;
+    public bool HasVerifier()
+    {
+        var meta = _db.GetMeta(VerifierKey);
+        return !string.IsNullOrWhiteSpace(meta);
+    }
 
     /// <summary>Offline verification path. Audits every attempt.</summary>
     public VerifyResult VerifyOffline(string password)

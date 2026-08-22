@@ -7,9 +7,11 @@ public interface IProcessController
 {
     void LaunchTracked(string executablePath, string? arguments);
     void KillAllTracked();
+    int TrackedRunningCount();
     void LockStation();
     void RestartMachine();
     void ShutdownMachine();
+    event Action? TrackedProcessesChanged;
 }
 
 /// <summary>
@@ -22,24 +24,43 @@ public sealed class ProcessController : IProcessController
     private readonly List<Process> _tracked = new();
     private readonly Action<string> _log;
 
+    public event Action? TrackedProcessesChanged;
+
     public ProcessController(Action<string>? log = null) => _log = log ?? (_ => { });
 
     public void LaunchTracked(string executablePath, string? arguments)
     {
+        if (!File.Exists(executablePath))
+        {
+            throw new FileNotFoundException($"Executable not found: {executablePath}");
+        }
+
         var psi = new ProcessStartInfo
         {
             FileName = executablePath,
             Arguments = arguments ?? string.Empty,
             UseShellExecute = true,
         };
-        var process = Process.Start(psi);
-        if (process is null) return;
+        var process = Process.Start(psi)
+            ?? throw new InvalidOperationException($"Failed to start: {executablePath}");
+        process.EnableRaisingEvents = true;
+        process.Exited += (_, _) => NotifyTrackedChanged();
         lock (_gate)
         {
             _tracked.RemoveAll(p => p.HasExited);
             _tracked.Add(process);
         }
         _log($"launched {executablePath} pid={process.Id}");
+        NotifyTrackedChanged();
+    }
+
+    public int TrackedRunningCount()
+    {
+        lock (_gate)
+        {
+            _tracked.RemoveAll(p => p.HasExited);
+            return _tracked.Count;
+        }
     }
 
     public void KillAllTracked()
@@ -51,27 +72,32 @@ public sealed class ProcessController : IProcessController
             _tracked.Clear();
         }
 
-        foreach (var process in toKill)
-        {
-            try { process.CloseMainWindow(); } catch { /* ignore */ }
-        }
+        if (toKill.Count == 0) return;
 
-        // Grace period, then hard kill.
-        Thread.Sleep(500);
-        foreach (var process in toKill)
+        _ = Task.Run(() =>
         {
-            try
+            toKill.ForEach(process =>
             {
-                if (!process.HasExited && !process.WaitForExit(9500))
+                try { process.CloseMainWindow(); } catch { /* ignore */ }
+            });
+
+            Thread.Sleep(500);
+            toKill.ForEach(process =>
+            {
+                try
                 {
-                    process.Kill(entireProcessTree: true);
+                    if (!process.HasExited && !process.WaitForExit(9500))
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                _log($"kill failed: {ex.Message}");
-            }
-        }
+                catch (Exception ex)
+                {
+                    _log($"kill failed: {ex.Message}");
+                }
+            });
+            NotifyTrackedChanged();
+        });
     }
 
     public void LockStation()
@@ -82,6 +108,8 @@ public sealed class ProcessController : IProcessController
     public void RestartMachine() => RunShutdown("/r /t 5 /c \"PACMAN Gaming Cafe\"");
 
     public void ShutdownMachine() => RunShutdown("/s /t 5 /c \"PACMAN Gaming Cafe\"");
+
+    private void NotifyTrackedChanged() => TrackedProcessesChanged?.Invoke();
 
     private void RunShutdown(string args)
     {

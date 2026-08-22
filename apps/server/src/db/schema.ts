@@ -63,6 +63,7 @@ export const gameVersionStatusEnum = pgEnum("game_version_status", [
 export const sessionStatusEnum = pgEnum("session_status", [
   "scheduled",
   "active",
+  "paused",
   "expired",
   "ended",
   "cancelled",
@@ -645,6 +646,8 @@ export const customers = pgTable(
       "customers_contact_chk",
       sql`(${t.phone} is not null or ${t.email} is not null or ${t.authMethod} = 'none')`,
     ),
+    uniqueIndex("customers_cafe_email_uq").on(t.cafeId, sql`lower(${t.email})`),
+    uniqueIndex("customers_cafe_phone_uq").on(t.cafeId, t.phone),
   ],
 );
 

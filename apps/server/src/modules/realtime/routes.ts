@@ -133,4 +133,15 @@ export async function registerRealtimeRoutes(app: FastifyInstance): Promise<void
     if (query.cafe !== user.cafe_id) throw problem(403, "Forbidden", "CROSS_CAFE");
     await streamEvents(req as unknown as SseRequest, reply, query.cafe, { kind: "admin" });
   });
+
+  app.get("/realtime/kitchen", async (req, reply) => {
+    const user: UserClaims = await requireUserForSse(req);
+    const query = req.query as { cafe?: string };
+    if (!query.cafe) throw problem(400, "Bad Request", "CAFE_REQUIRED");
+    if (query.cafe !== user.cafe_id) throw problem(403, "Forbidden", "CROSS_CAFE");
+    if (user.role !== "kitchen" && !["owner", "manager", "staff"].includes(user.role)) {
+      throw problem(403, "Forbidden", "ROLE_NOT_ALLOWED");
+    }
+    await streamEvents(req as unknown as SseRequest, reply, query.cafe, { kind: "kitchen" });
+  });
 }

@@ -31,12 +31,12 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
   app.post(
     "/sessions/:id/pause",
     { preHandler: requireUser(["owner", "manager", "staff"]) },
-    makeTerminalTransitionHandler("paused", "SESSION_PAUSED", "none"),
+    makeTerminalTransitionHandler("paused", "SESSION_PAUSED", "pause"),
   );
   app.post(
     "/sessions/:id/resume",
     { preHandler: requireUser(["owner", "manager", "staff"]) },
-    makeTerminalTransitionHandler("resumed", "SESSION_RESUMED", "none"),
+    makeTerminalTransitionHandler("resumed", "SESSION_RESUMED", "resume"),
   );
   app.get("/pcs/:id/session", { preHandler: requireUser() }, handlePcSession);
   app.get("/sessions/:id/events", { preHandler: requireUser() }, handleSessionEvents);

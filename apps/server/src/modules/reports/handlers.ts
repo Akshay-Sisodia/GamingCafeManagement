@@ -24,17 +24,6 @@ export async function handleDashboard(req: FastifyRequest) {
       ),
     );
 
-  const [sessionRevenue] = await db
-    .select({ total: sql<number>`coalesce(sum(${sessions.priceAmount}), 0)::bigint` })
-    .from(sessions)
-    .where(
-      and(
-        eq(sessions.cafeId, user.cafe_id),
-        sql`${sessions.status} in ('ended','expired')`,
-        gte(sessions.startedAt, today),
-      ),
-    );
-
   const [pcCounts] = await db
     .select({
       total: sql<number>`count(*)::int`,
@@ -64,7 +53,7 @@ export async function handleDashboard(req: FastifyRequest) {
     );
 
   return {
-    revenue_today: Number(paymentRevenue?.total ?? 0) + Number(sessionRevenue?.total ?? 0),
+    revenue_today: Number(paymentRevenue?.total ?? 0),
     pcs_total: pcCounts?.total ?? 0,
     pcs_occupied: occupied?.count ?? 0,
     active_sessions: activeSessions?.count ?? 0,

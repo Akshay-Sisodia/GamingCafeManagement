@@ -240,9 +240,8 @@ export async function handleSyncBatches(req: FastifyRequest) {
     .select({ batch: reconciliationBatches, pc_name: pcs.name })
     .from(reconciliationBatches)
     .innerJoin(pcs, eq(pcs.id, reconciliationBatches.pcId))
-    .where(eq(reconciliationBatches.pcId, pcs.id))
+    .where(eq(pcs.cafeId, user.cafe_id))
     .orderBy(asc(reconciliationBatches.receivedAt))
     .limit(100);
-  void user;
   return { batches: rows.map((r) => ({ ...r.batch, pc_name: r.pc_name })) };
 }

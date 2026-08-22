@@ -2,6 +2,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 
 namespace GamingLauncher.Ipc;
 
@@ -26,127 +27,214 @@ public static class IpcProtocol
     public const string MethodOrderPlace = "order.place";
     public const string MethodSuperadminVerify = "superadmin.verify";
     public const string MethodGameLaunch = "game.launch";
+    public const string MethodGamesScan = "games.scan";
+    public const string MethodGamesImportDiscovered = "games.import_discovered";
+    public const string MethodGamesAdd = "games.add";
+    public const string MethodGamesRemove = "games.remove";
+    public const string MethodGamesSetThumbnail = "games.set_thumbnail";
+    public const string MethodGamesSetPath = "games.set_path";
     public const string MethodMaintenanceAction = "maintenance.action";
 }
 
 public sealed record IpcPush(string Type, JsonElement Data);
 
-/// <summary>Reconnecting named-pipe client. Never crashes when the agent is absent.</summary>
+/// <summary>
+/// Reconnecting named-pipe client. All pipe I/O runs on one session loop:
+/// one reader, one in-flight request, queued outbound requests — no races.
+/// </summary>
 public sealed class NamedPipeIpcClient : IDisposable
 {
-    private NamedPipeClientStream? _pipe;
-    private StreamReader? _reader;
-    private StreamWriter? _writer;
-    private readonly CancellationTokenSource _cts = new();
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private sealed record PendingRequest(string Method, object? Payload, TaskCompletionSource<JsonElement?> Reply);
 
-    public bool IsConnected => _pipe?.IsConnected ?? false;
+    private readonly CancellationTokenSource _cts = new();
+    private readonly Channel<PendingRequest> _requests = Channel.CreateUnbounded<PendingRequest>(
+        new UnboundedChannelOptions { SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = false });
+    private readonly string? _ipcToken = Environment.GetEnvironmentVariable("GAMINGCAFE_IPC_TOKEN");
+
+    private volatile int _connected;
+
+    public bool IsConnected => _connected == 1;
     public event Action<IpcPush>? PushReceived;
     public event Action<bool>? ConnectionChanged;
 
     public void Start() => _ = Task.Run(() => ConnectLoopAsync(_cts.Token));
 
+    public async Task<JsonElement?> SendRequestAsync(string method, object? payload, CancellationToken ct = default)
+    {
+        if (!IsConnected) return null;
+
+        var reply = new TaskCompletionSource<JsonElement?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await _requests.Writer.WriteAsync(new PendingRequest(method, WithIpcToken(payload), reply), ct);
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        try
+        {
+            return await reply.Task.WaitAsync(timeout.Token);
+        }
+        catch
+        {
+            reply.TrySetResult(null);
+            return null;
+        }
+    }
+
+    private object? WithIpcToken(object? payload)
+    {
+        if (string.IsNullOrWhiteSpace(_ipcToken)) return payload;
+        if (payload is null) return new { ipc_token = _ipcToken };
+        if (payload is JsonElement el && el.ValueKind == JsonValueKind.Object)
+        {
+            var dict = el.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone());
+            dict["ipc_token"] = _ipcToken;
+            return dict;
+        }
+        var json = JsonSerializer.Serialize(payload);
+        using var doc = JsonDocument.Parse(json);
+        var map = doc.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone());
+        map["ipc_token"] = _ipcToken;
+        return map;
+    }
+
     private async Task ConnectLoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
+            NamedPipeClientStream? pipe = null;
             try
             {
-                _pipe = new NamedPipeClientStream(".", IpcProtocol.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-                await _pipe.ConnectAsync(3000, ct);
-                _reader = new StreamReader(_pipe, Encoding.UTF8, leaveOpen: true);
-                _writer = new StreamWriter(_pipe, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
-                ConnectionChanged?.Invoke(true);
+                pipe = new NamedPipeClientStream(".", IpcProtocol.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                await pipe.ConnectAsync(3000, ct);
 
-                while (!ct.IsCancellationRequested && _pipe.IsConnected)
-                {
-                    var line = await _reader.ReadLineAsync(ct);
-                    if (line is null) break;
-                    HandleMessage(line);
-                }
-                ConnectionChanged?.Invoke(false);
+                using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
+                using var writer = new StreamWriter(pipe, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
+
+                SetConnected(true);
+                await SessionLoopAsync(reader, writer, ct);
             }
-            catch (OperationCanceledException) { break; }
-            catch (Exception)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                ConnectionChanged?.Invoke(false);
+                break;
+            }
+            catch
+            {
+                // agent absent — retry
+            }
+            finally
+            {
+                SetConnected(false);
+                FailAllPendingRequests();
+                pipe?.Dispose();
             }
 
             try { await Task.Delay(2000, ct); } catch (OperationCanceledException) { break; }
         }
     }
 
-    private void HandleMessage(string line)
+    private async Task SessionLoopAsync(StreamReader reader, StreamWriter writer, CancellationToken ct)
     {
+        PendingRequest? inFlight = null;
+
+        while (!ct.IsCancellationRequested)
+        {
+            if (inFlight is null && _requests.Reader.TryRead(out var next))
+            {
+                inFlight = next;
+                var body = JsonSerializer.Serialize(new { method = inFlight.Method, payload = inFlight.Payload });
+                await writer.WriteLineAsync(body.AsMemory(), ct);
+            }
+
+            var line = await reader.ReadLineAsync(ct);
+            if (line is null) break;
+
+            if (TryParseResponse(line, out var data, out var ok))
+            {
+                inFlight?.Reply.TrySetResult(data);
+                inFlight = null;
+                continue;
+            }
+
+            if (TryParsePush(line, out var push))
+            {
+                PushReceived?.Invoke(push);
+            }
+        }
+
+        inFlight?.Reply.TrySetResult(null);
+    }
+
+    private void SetConnected(bool connected)
+    {
+        _connected = connected ? 1 : 0;
+        ConnectionChanged?.Invoke(connected);
+    }
+
+    private void FailAllPendingRequests()
+    {
+        while (_requests.Reader.TryRead(out var pending))
+        {
+            pending.Reply.TrySetResult(null);
+        }
+    }
+
+    private static bool TryParseResponse(string line, out JsonElement? data, out bool ok)
+    {
+        data = null;
+        ok = false;
         try
         {
             using var doc = JsonDocument.Parse(line);
             var root = doc.RootElement;
-            if (root.TryGetProperty("type", out var typeEl))
+            if (!root.TryGetProperty("ok", out var okEl)) return false;
+
+            ok = okEl.GetBoolean();
+            if (!ok)
             {
-                var push = new IpcPush(typeEl.GetString() ?? "",
-                    root.TryGetProperty("data", out var d) ? d.Clone() : JsonSerializer.SerializeToElement(new { }));
-                PushReceived?.Invoke(push);
+                data = JsonSerializer.SerializeToElement(new
+                {
+                    ok = false,
+                    error = root.TryGetProperty("error", out var err) ? err.GetString() : "Request failed",
+                });
+                return true;
             }
-            // responses are consumed by SendRequestAsync via pending map (kept simple:
-            // launcher sends one request at a time from UI thread)
+
+            data = root.TryGetProperty("data", out var payload)
+                ? payload.Clone()
+                : JsonSerializer.SerializeToElement(new { });
+            return true;
         }
         catch
         {
-            // malformed message — ignore
+            return false;
         }
     }
 
-    /// <summary>Sends a request and waits for the response line.</summary>
-    public async Task<JsonElement?> SendRequestAsync(string method, object? payload, CancellationToken ct = default)
+    private static bool TryParsePush(string line, out IpcPush push)
     {
-        if (!IsConnected) return null;
-        var request = JsonSerializer.Serialize(new { method, payload });
+        push = new IpcPush("", JsonSerializer.SerializeToElement(new { }));
         try
         {
-            await _writeLock.WaitAsync(ct);
-            try
-            {
-                await _writer!.WriteLineAsync(request.AsMemory(), ct);
-                // Read response synchronously on a worker — responses interleave with pushes,
-                // so scan until we see an ok/error envelope.
-                while (!ct.IsCancellationRequested)
-                {
-                    var lineTask = _reader!.ReadLineAsync(ct);
-                    var line = await lineTask;
-                    if (line is null) return null;
-                    using var doc = JsonDocument.Parse(line);
-                    if (doc.RootElement.TryGetProperty("ok", out var ok))
-                    {
-                        return ok.GetBoolean()
-                            ? doc.RootElement.TryGetProperty("data", out var data) ? data.Clone() : JsonSerializer.SerializeToElement(new { })
-                            : null;
-                    }
-                    // else it was a push → dispatch
-                    if (doc.RootElement.TryGetProperty("type", out var t))
-                    {
-                        PushReceived?.Invoke(new IpcPush(t.GetString() ?? "",
-                            doc.RootElement.TryGetProperty("data", out var d2) ? d2.Clone() : JsonSerializer.SerializeToElement(new { })));
-                    }
-                }
-                return null;
-            }
-            finally
-            {
-                _writeLock.Release();
-            }
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("type", out var typeEl)) return false;
+
+            push = new IpcPush(
+                typeEl.GetString() ?? "",
+                root.TryGetProperty("data", out var d) ? d.Clone() : JsonSerializer.SerializeToElement(new { }));
+            return true;
         }
         catch
         {
-            return null;
+            return false;
         }
     }
 
     public void Dispose()
     {
         _cts.Cancel();
-        try { _pipe?.Dispose(); } catch { }
+        _requests.Writer.TryComplete();
+        FailAllPendingRequests();
+        SetConnected(false);
         _cts.Dispose();
-        _writeLock.Dispose();
     }
 }

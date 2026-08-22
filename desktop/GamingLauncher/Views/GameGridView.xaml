@@ -1,21 +1,18 @@
 <UserControl x:Class="GamingLauncher.Views.GameGridView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid Margin="32,24,32,16">
+    <Grid Margin="32,28,32,20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Margin="4,0,4,20">
-            <TextBlock Text="GAME LIBRARY" FontFamily="{StaticResource Font.Display}"
-                       FontSize="28" FontWeight="Bold"
-                       Foreground="{StaticResource Brush.Text}" />
-            <TextBlock Text="Pick your title — neon's on, timer's running."
-                       FontSize="15" Foreground="{StaticResource Brush.TextMuted}" Margin="0,6,0,0" />
+        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+            <TextBlock Text="Game library" Style="{StaticResource PageTitle}" />
+            <TextBlock Text="Select a title to launch." Style="{StaticResource PageSubtitle}" Margin="0,6,0,0" />
         </StackPanel>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer Grid.Row="1">
             <ItemsControl ItemsSource="{Binding Items}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
@@ -27,7 +24,7 @@
                         <Button Command="{Binding DataContext.LaunchCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                 CommandParameter="{Binding}"
                                 Style="{StaticResource GamePosterButton}"
-                                Width="220" Height="300" Margin="10">
+                                Width="220" Height="300" Margin="8">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="*" />
@@ -38,25 +35,23 @@
                                     <Border Background="{Binding FallbackBrush}" />
                                     <Image Source="{Binding CoverImage}" Stretch="UniformToFill"
                                            Visibility="{Binding HasCoverImage, Converter={StaticResource BoolToVisibility}}" />
-                                    <Border Background="#6606070D" />
-                                    <TextBlock Text="{Binding Initial}" FontFamily="{StaticResource Font.Display}"
-                                               FontSize="48" FontWeight="Bold"
-                                               Foreground="#80FFFFFF"
+                                    <Border Background="#40000000" />
+                                    <TextBlock Text="{Binding Initial}" FontSize="36" FontWeight="SemiBold"
+                                               Foreground="#99FFFFFF"
                                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                                Visibility="{Binding HasCoverImage, Converter={StaticResource InverseBoolToVisibility}}" />
                                 </Grid>
 
                                 <Border Grid.Row="1" Background="{StaticResource Brush.SurfaceRaised}"
-                                        Padding="14,12">
+                                        Padding="12,10">
                                     <StackPanel>
                                         <TextBlock Text="{Binding Name}" FontFamily="{StaticResource Font.Display}"
-                                                   FontSize="17" FontWeight="Bold"
-                                                   Foreground="{StaticResource Brush.Text}"
+                                                   FontSize="15" Foreground="{StaticResource Brush.Text}"
                                                    TextTrimming="CharacterEllipsis" />
-                                        <Border Style="{StaticResource CategoryBadge}" Margin="0,8,0,0"
+                                        <Border Style="{StaticResource CategoryBadge}" Margin="0,6,0,0"
                                                 HorizontalAlignment="Left">
-                                            <TextBlock Text="{Binding Category}" FontSize="11" FontWeight="Bold"
-                                                       Foreground="{StaticResource Brush.Accent}" />
+                                            <TextBlock Text="{Binding Category}" FontSize="11"
+                                                       Foreground="{StaticResource Brush.TextMuted}" />
                                         </Border>
                                     </StackPanel>
                                 </Border>

@@ -19,7 +19,7 @@ export function CustomersTable({ customers }: { customers: CustomerDto[] }) {
           {customers.map((customer) => (
             <tr key={customer.id} className="hover:bg-zinc-900/60">
               <td className="px-4 py-3 font-medium text-zinc-100">{customer.name}</td>
-              <td className="px-4 py-3 text-zinc-400">{customer.email}</td>
+              <td className="px-4 py-3 text-zinc-400">{customer.email ?? "—"}</td>
               <td className="px-4 py-3 text-zinc-400">{customer.phone ?? "—"}</td>
               <td className="px-4 py-3 text-zinc-300">{formatMoney(customer.wallet_balance)}</td>
               <td className="px-4 py-3 text-zinc-300">{customer.loyalty_points} pts</td>

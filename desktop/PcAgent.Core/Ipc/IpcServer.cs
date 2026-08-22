@@ -8,8 +8,7 @@ public sealed record IpcRequest(string Method, JsonElement Payload);
 
 /// <summary>
 /// Named-pipe JSON server the Gaming Launcher talks to (pipe "GamingCafeAgent").
-/// Newline-delimited JSON: {"method":"...","payload":{...}} → {"ok":true,"data":{...}}.
-/// The launcher is unprivileged — every privileged action arrives here.
+/// One connection, one read loop, all writes serialized through a gate.
 /// </summary>
 public sealed class IpcServer
 {
@@ -18,8 +17,8 @@ public sealed class IpcServer
     private readonly Func<IpcRequest, CancellationToken, Task<object?>> _handler;
     private readonly Action<string> _log;
     private readonly CancellationTokenSource _cts = new();
-    private readonly SemaphoreSlim _writeGate = new(1, 1); // timer pushes vs responses
-    private Func<string, Task>? _writeCurrent;             // bound per connection
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
+    private Func<string, Task>? _writeCurrent;
     private int _connSeq;
     private int _boundConn = -1;
 
@@ -41,8 +40,6 @@ public sealed class IpcServer
     {
         while (!ct.IsCancellationRequested)
         {
-            // Explicit 4 KiB buffers — the default constructor uses a 0-byte
-            // output buffer on Windows, which deadlocks StreamWriter setup.
             var server = new NamedPipeServerStream(
                 PipeName,
                 PipeDirection.InOut,
@@ -57,7 +54,11 @@ public sealed class IpcServer
                 await server.WaitForConnectionAsync(ct);
                 _log("pipe client accepted");
             }
-            catch (OperationCanceledException) { server.Dispose(); break; }
+            catch (OperationCanceledException)
+            {
+                server.Dispose();
+                break;
+            }
             catch (Exception ex)
             {
                 _log($"IPC accept error: {ex.Message}");
@@ -87,7 +88,7 @@ public sealed class IpcServer
                         var line = await reader.ReadLineAsync(ct);
                         if (line is null) break;
 
-                        object? result = null;
+                        object? result;
                         try
                         {
                             using var doc = JsonDocument.Parse(line);
@@ -103,6 +104,7 @@ public sealed class IpcServer
                             await WriteAsync(JsonSerializer.Serialize(new { ok = false, error = ex.Message }));
                             continue;
                         }
+
                         await WriteAsync(JsonSerializer.Serialize(new { ok = true, data = result }));
                     }
                 }
@@ -125,8 +127,6 @@ public sealed class IpcServer
         var write = _writeCurrent;
         if (write is null) return;
 
-        // Timer pushes (main loop) and request responses (read loop) share the
-        // pipe — without this gate their frames interleave and corrupt JSON.
         await _writeGate.WaitAsync();
         try
         {
@@ -143,22 +143,24 @@ public sealed class IpcServer
     }
 
     /// <summary>Pushes an event to the connected launcher, if any.</summary>
-    public async Task PushAsync(string type, object? data)
+    public Task PushAsync(string type, object? data)
     {
         try
         {
             var message = JsonSerializer.Serialize(new { type, data });
-            await WriteAsync(message);
+            return WriteAsync(message);
         }
         catch (Exception ex)
         {
             _log($"push {type} failed: {ex.Message}");
+            return Task.CompletedTask;
         }
     }
 
     public void Dispose()
     {
         _cts.Cancel();
+        _writeGate.Dispose();
         _cts.Dispose();
     }
 }

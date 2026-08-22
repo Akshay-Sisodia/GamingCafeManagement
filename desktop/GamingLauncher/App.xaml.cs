@@ -1,15 +1,15 @@
 ﻿using System.Windows;
-using GamingLauncher.Services;
 
 namespace GamingLauncher;
 
 public partial class App : Application
 {
-    public static ThemeService Themes { get; } = new();
-
     private void OnStartup(object sender, StartupEventArgs e)
     {
-        Themes.Apply(false);
+        Resources.MergedDictionaries.Add(new ResourceDictionary
+        {
+            Source = new Uri("Themes/KioskTheme.Night.xaml", UriKind.Relative),
+        });
         new MainWindow().Show();
     }
 }

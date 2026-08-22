@@ -70,10 +70,17 @@ export interface PcDetailDto extends PcDto {
   commands: CommandDto[];
 }
 
+export interface GameVersionDto {
+  id: string;
+  version: string;
+  status: string;
+}
+
 export interface GameDto {
   id: string;
   name: string;
   platform: string;
+  versions?: GameVersionDto[];
 }
 
 export interface DeploymentTargetDto {
@@ -108,7 +115,7 @@ export interface MenuCategoryDto {
 export interface CustomerDto {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
   phone: string | null;
   wallet_balance: number;
   loyalty_points: number;

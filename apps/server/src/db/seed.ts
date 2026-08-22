@@ -178,6 +178,7 @@ async function seedGames(cafeId: string): Promise<Map<string, string>> {
       executablePath:
         "C:\\Games\\Steam\\steamapps\\common\\Counter-Strike Global Offensive\\game\\bin\\win64\\cs2.exe",
       displayOrder: 1,
+      iconUrl: "https://picsum.photos/seed/cs2/480/640",
     },
     {
       name: "Valorant",
@@ -186,6 +187,7 @@ async function seedGames(cafeId: string): Promise<Map<string, string>> {
       executablePath:
         "C:\\Games\\Riot Games\\VALORANT\\bin\\win64\\VALORANT-win64.exe",
       displayOrder: 2,
+      iconUrl: "https://picsum.photos/seed/valorant/480/640",
     },
     {
       name: "GTA V",
@@ -193,6 +195,7 @@ async function seedGames(cafeId: string): Promise<Map<string, string>> {
       category: "Open World",
       executablePath: "C:\\Games\\Grand Theft Auto V\\PlayGTAV.exe",
       displayOrder: 3,
+      iconUrl: "https://picsum.photos/seed/gtav/480/640",
     },
     {
       name: "FIFA 24",
@@ -200,6 +203,7 @@ async function seedGames(cafeId: string): Promise<Map<string, string>> {
       category: "Sports",
       executablePath: "C:\\Games\\FIFA 24\\FIFA24.exe",
       displayOrder: 4,
+      iconUrl: "https://picsum.photos/seed/fifa24/480/640",
     },
     {
       name: "Fortnite",
@@ -208,6 +212,7 @@ async function seedGames(cafeId: string): Promise<Map<string, string>> {
       executablePath:
         "C:\\Games\\Epic Games\\Fortnite\\FortniteGame\\Binaries\\Win64\\FortniteClient-Win64-Shipping.exe",
       displayOrder: 5,
+      iconUrl: "https://picsum.photos/seed/fortnite/480/640",
     },
     {
       name: "Apex Legends",
@@ -215,6 +220,7 @@ async function seedGames(cafeId: string): Promise<Map<string, string>> {
       category: "Battle Royale",
       executablePath: "C:\\Games\\Steam\\steamapps\\common\\Apex Legends\\r5apex.exe",
       displayOrder: 6,
+      iconUrl: "https://picsum.photos/seed/apex/480/640",
     },
   ];
 
@@ -239,6 +245,7 @@ async function seedGames(cafeId: string): Promise<Map<string, string>> {
               platform: def.platform,
               category: def.category,
               executablePath: def.executablePath,
+              iconUrl: def.iconUrl,
               displayOrder: def.displayOrder,
               enabled: true,
             })

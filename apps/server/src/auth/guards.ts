@@ -13,7 +13,7 @@ export interface UserClaims {
   cafe_id: string;
   role: StaffRole;
   email: string;
-  typ: "access" | "refresh";
+  typ: "access" | "refresh" | "sse";
 }
 
 export interface DevicePrincipal {
@@ -50,6 +50,15 @@ export async function signRefreshToken(claims: Omit<UserClaims, "typ">): Promise
     .sign(secret);
 }
 
+export async function signSseToken(claims: Omit<UserClaims, "typ">): Promise<string> {
+  return new SignJWT({ ...claims, typ: "sse" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(claims.sub)
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .sign(secret);
+}
+
 export async function verifyJwt(token: string): Promise<UserClaims> {
   try {
     const { payload } = await jwtVerify(token, secret);
@@ -66,7 +75,7 @@ export async function verifyJwt(token: string): Promise<UserClaims> {
       cafe_id: payload.cafe_id,
       role: payload.role as StaffRole,
       email: typeof payload.email === "string" ? payload.email : "",
-      typ: payload.typ as "access" | "refresh",
+      typ: payload.typ as "access" | "refresh" | "sse",
     };
   } catch {
     throw problem(401, "Unauthorized", "INVALID_TOKEN");
@@ -157,5 +166,10 @@ export async function requireDeviceForSse(req: FastifyRequest): Promise<DevicePr
 }
 
 export async function requireUserForSse(req: FastifyRequest): Promise<UserClaims> {
-  return authenticateUser(req);
+  const token = extractToken(req);
+  if (!token) throw problem(401, "Unauthorized", "MISSING_TOKEN");
+  const claims = await verifyJwt(token);
+  if (claims.typ === "sse") return claims;
+  if (claims.typ !== "access") throw problem(401, "Unauthorized", "WRONG_TOKEN_TYPE");
+  return claims;
 }

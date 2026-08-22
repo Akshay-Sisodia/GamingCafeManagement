@@ -72,6 +72,13 @@ export const auth = {
   },
 };
 
+export function signOutAndRedirect(): void {
+  auth.signOut();
+  if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+    window.location.assign("/login");
+  }
+}
+
 interface RequestOptions {
   method?: string;
   body?: unknown;
@@ -79,12 +86,10 @@ interface RequestOptions {
 
 let refreshInFlight: Promise<boolean> | null = null;
 
-/** Exchanges the refresh token for a new access token. Returns success. */
 async function refreshAccessToken(): Promise<boolean> {
   const refresh = auth.refreshToken();
   if (!refresh) return false;
 
-  // Coalesce concurrent 401s into a single refresh call.
   refreshInFlight ??= (async () => {
     try {
       const res = await fetch(`${API}/v1/auth/refresh`, {
@@ -149,13 +154,32 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   try {
     return await execute<T>(path, options);
   } catch (err) {
-    // Access token expired → silently refresh once and retry the request.
     const isAuthPath = path.startsWith("/auth/");
     if (err instanceof ApiError && err.status === 401 && !isAuthPath) {
       const refreshed = await refreshAccessToken();
       if (refreshed) return await execute<T>(path, options);
-      auth.signOut();
+      signOutAndRedirect();
     }
     throw err;
+  }
+}
+
+export async function fetchSseToken(): Promise<string | null> {
+  try {
+    const data = await api<{ sse_token: string }>("/auth/sse-token", { method: "POST", body: {} });
+    return data.sse_token;
+  } catch {
+    return null;
+  }
+}
+
+export async function validateSession(): Promise<boolean> {
+  if (!auth.token()) return false;
+  try {
+    await api("/me");
+    return true;
+  } catch {
+    signOutAndRedirect();
+    return false;
   }
 }

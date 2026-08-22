@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { healthReportSchema } from "@gaming-cafe/shared";
 import { z } from "zod";
 import type { FastifyRequest } from "fastify";
@@ -108,9 +108,19 @@ export async function handleGetPc(req: FastifyRequest) {
     .limit(200);
 
   const sessionRows = await db
-    .select()
+    .select({
+      session: sessions,
+      customerName: customers.name,
+    })
     .from(sessions)
-    .where(and(eq(sessions.pcId, id), eq(sessions.status, "active")))
+    .leftJoin(customers, eq(customers.id, sessions.customerId))
+    .where(
+      and(
+        eq(sessions.pcId, id),
+        inArray(sessions.status, ["active", "scheduled", "paused"]),
+      ),
+    )
+    .orderBy(desc(sessions.startedAt))
     .limit(1);
 
   const commandRows = await db
@@ -128,11 +138,11 @@ export async function handleGetPc(req: FastifyRequest) {
     agent_version: row.pc.agentVersion ?? "",
     current_session: sessionRows[0]
       ? {
-          id: sessionRows[0].id,
-          customer_name: null,
-          started_at: sessionRows[0].startedAt.toISOString(),
-          expires_at: sessionRows[0].expiresAt.toISOString(),
-          planned_minutes: sessionRows[0].plannedMinutes,
+          id: sessionRows[0].session.id,
+          customer_name: sessionRows[0].customerName,
+          started_at: sessionRows[0].session.startedAt.toISOString(),
+          expires_at: sessionRows[0].session.expiresAt.toISOString(),
+          planned_minutes: sessionRows[0].session.plannedMinutes,
           game_name: null,
         }
       : null,

@@ -23,22 +23,37 @@ import {
   sha256Hex,
   signAccessToken,
   signRefreshToken,
+  signSseToken,
   verifyJwt,
 } from "../../auth/guards.js";
 import { parseBody, problem } from "../../lib/problem.js";
+import { checkRateLimit, failRateLimit, resetRateLimit, retryAfterSeconds } from "../../lib/rate-limit.js";
 import { writeAudit } from "../audit/service.js";
 
 export async function handleLogin(req: FastifyRequest) {
   const input = parseBody(loginSchema, req.body);
+  const rateKey = `login:${input.email.toLowerCase()}`;
+  if (!checkRateLimit(rateKey)) {
+    throw problem(429, "Too Many Requests", "LOGIN_RATE_LIMITED", `retry after ${retryAfterSeconds(rateKey)}s`);
+  }
+
   const rows = await db
     .select()
     .from(users)
     .where(and(sql`lower(${users.email}) = ${input.email.toLowerCase()}`, eq(users.status, "active")))
     .limit(2);
   const user = rows[0];
-  if (!user || rows.length > 1) throw problem(401, "Unauthorized", "INVALID_CREDENTIALS");
+  if (!user || rows.length > 1) {
+    failRateLimit(rateKey);
+    throw problem(401, "Unauthorized", "INVALID_CREDENTIALS");
+  }
   const ok = await verify(user.passwordHash, input.password);
-  if (!ok) throw problem(401, "Unauthorized", "INVALID_CREDENTIALS");
+  if (!ok) {
+    failRateLimit(rateKey);
+    throw problem(401, "Unauthorized", "INVALID_CREDENTIALS");
+  }
+
+  resetRateLimit(rateKey);
 
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
   await writeAudit(db, {
@@ -73,11 +88,27 @@ export async function handleRefresh(req: FastifyRequest) {
   const body = parseBody(z.object({ refresh_token: z.string().min(10) }), req.body);
   const claims = await verifyJwt(body.refresh_token);
   if (claims.typ !== "refresh") throw problem(401, "Unauthorized", "WRONG_TOKEN_TYPE");
+
+  const userRows = await db
+    .select({ id: users.id, status: users.status })
+    .from(users)
+    .where(eq(users.id, claims.sub))
+    .limit(1);
+  const user = userRows[0];
+  if (!user || user.status !== "active") throw problem(401, "Unauthorized", "USER_INACTIVE");
+
   const base = { sub: claims.sub, cafe_id: claims.cafe_id, role: claims.role, email: claims.email };
   return {
     access_token: await signAccessToken(base),
     refresh_token: await signRefreshToken(base),
   };
+}
+
+export async function handleSseToken(req: FastifyRequest) {
+  const user = req.user!;
+  const base = { sub: user.sub, cafe_id: user.cafe_id, role: user.role, email: user.email };
+  const token = await signSseToken(base);
+  return { sse_token: token, expires_in: 300 };
 }
 
 export async function handleDevicePair(req: FastifyRequest) {

@@ -6,18 +6,9 @@ const BASE_ORIGINS = new Set([
   "http://localhost:5175",
 ]);
 
-/** Any Vercel preview/production domain for this project. */
-function isVercelApp(origin: string): boolean {
-  return /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin);
-}
-
 export function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) return true; // same-origin or non-browser client
-  return (
-    BASE_ORIGINS.has(origin) ||
-    config.CORS_ORIGINS.includes(origin) ||
-    isVercelApp(origin)
-  );
+  return BASE_ORIGINS.has(origin) || config.CORS_ORIGINS.includes(origin);
 }
 
 /**

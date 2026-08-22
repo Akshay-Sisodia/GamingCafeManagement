@@ -70,11 +70,12 @@ export function rememberRemoteEntry(cafeId: string, raw: string): StreamEntry | 
 }
 
 export interface SseContext {
-  kind: "pc" | "admin";
+  kind: "pc" | "admin" | "kitchen";
   pcId?: string;
 }
 
 export function matchesContext(entry: CafeEvent & { id?: number }, ctx: SseContext): boolean {
+  if (ctx.kind === "kitchen") return entry.event === "order.updated";
   if (ctx.kind === "admin") return true;
   return entry.pc_id === undefined || entry.pc_id === ctx.pcId;
 }
