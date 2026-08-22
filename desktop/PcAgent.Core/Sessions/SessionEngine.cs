@@ -68,6 +68,16 @@ public sealed class SessionEngine
 
     public string? ServerSessionId() => LoadActive()?.ServerId;
 
+    public void BindServerSessionId(string localRef, string serverSessionId)
+    {
+        _db.ExecuteNonQuery(
+            """
+            UPDATE sessions_local SET server_session_id = $sid
+            WHERE local_ref = $ref AND (server_session_id IS NULL OR server_session_id = '')
+            """,
+            ("$sid", serverSessionId), ("$ref", localRef));
+    }
+
     /// <summary>Re-derives state from SQLite after service/OS restart.</summary>
     public void RecoverOnBoot()
     {

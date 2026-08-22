@@ -122,6 +122,7 @@ public sealed class AgentWorker : BackgroundService
                 _timerPushLogged = false;
             }
             _ = PushSessionStateToLauncherAsync();
+            KickSync();
         };
 
         _superadmin = new SuperadminService(
@@ -136,6 +137,7 @@ public sealed class AgentWorker : BackgroundService
                 _db.ExecuteNonQuery(
                     "INSERT OR IGNORE INTO audit_pending(event_id, action, occurred_at, metadata) VALUES($id,$a,$at,$m)",
                     ("$id", Guid.CreateVersion7().ToString()), ("$a", action), ("$at", DateTimeOffset.UtcNow.ToString("O")), ("$m", meta));
+                KickSync();
             },
             msg => _logger.LogInformation("superadmin: {Msg}", msg));
 
@@ -151,7 +153,9 @@ public sealed class AgentWorker : BackgroundService
             _outbox,
             () => IsPaired() ? _api : null,
             () => (_deviceToken!, _pcId!, "1.0.0"),
+            (localRef, serverId) => _sessions!.BindServerSessionId(localRef, serverId),
             msg => _logger.LogInformation("sync: {Msg}", msg));
+        KickSync();
 
         StartSse();
         StartIpc();
@@ -217,7 +221,6 @@ public sealed class AgentWorker : BackgroundService
                 if (IsOnline() && DateTimeOffset.UtcNow - lastSyncPass > TimeSpan.FromSeconds(30))
                 {
                     await _sync!.SyncOnceAsync(stoppingToken);
-                    await SyncFromBootstrapAsync(stoppingToken);
                     lastSyncPass = DateTimeOffset.UtcNow;
                 }
             }
@@ -252,6 +255,16 @@ public sealed class AgentWorker : BackgroundService
     }
 
     private bool IsOnline() => _sse?.IsConnected == true;
+
+    private void KickSync()
+    {
+        if (_sync is null || !IsPaired()) return;
+        _ = Task.Run(async () =>
+        {
+            try { await _sync.SyncOnceAsync(_lifetime.Token); }
+            catch (Exception ex) { _logger.LogDebug("sync kick: {Msg}", ex.Message); }
+        });
+    }
 
     private async Task PairIfNeededAsync(CancellationToken ct)
     {
@@ -364,6 +377,7 @@ public sealed class AgentWorker : BackgroundService
                     catch { /* logged inside */ }
                     try { await RefreshMenuAsync(_lifetime.Token); }
                     catch { /* logged inside */ }
+                    KickSync();
                 });
             }
         };

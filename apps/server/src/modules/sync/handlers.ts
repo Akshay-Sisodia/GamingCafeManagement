@@ -23,6 +23,7 @@ import {
   loadActiveSession,
   recordOfflineEvent,
 } from "./apply.js";
+import { computeAckSeq } from "./ack-seq.js";
 import { resolveOfflineEvent } from "./conflicts.js";
 import type { SyncContext, SyncEvent } from "./types.js";
 
@@ -113,15 +114,7 @@ export async function handleSyncEvents(req: FastifyRequest): Promise<SyncBatchRe
   }, Promise.resolve());
 
   results.sort((a, b) => a.seq - b.seq);
-  let ackSeq = input.last_server_seq;
-  results.every((r) => {
-    if (r.seq !== ackSeq + 1) return false;
-    if (r.state === "accepted" || r.state === "duplicate") {
-      ackSeq = r.seq;
-      return true;
-    }
-    return false;
-  });
+  const ackSeq = computeAckSeq(input.last_server_seq, results);
 
   return { results, ack_seq: ackSeq };
 }
