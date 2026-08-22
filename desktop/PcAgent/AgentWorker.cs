@@ -357,10 +357,12 @@ public sealed class AgentWorker : BackgroundService
         {
             if (connected)
             {
-                // Refetch authoritative session on every (re)connect.
+                // Refetch authoritative session + menu on every (re)connect.
                 _ = Task.Run(async () =>
                 {
                     try { await SyncFromBootstrapAsync(_lifetime.Token); }
+                    catch { /* logged inside */ }
+                    try { await RefreshMenuAsync(_lifetime.Token); }
                     catch { /* logged inside */ }
                 });
             }
