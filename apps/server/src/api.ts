@@ -27,11 +27,7 @@ export function buildServer(): FastifyInstance {
 
   void app.register(cors, {
     origin: (origin, cb) => {
-      if (isAllowedOrigin(origin)) {
-        cb(null, true);
-        return;
-      }
-      cb(new Error(`Origin ${origin} not allowed by CORS`), false);
+      cb(null, isAllowedOrigin(origin));
     },
   });
 
