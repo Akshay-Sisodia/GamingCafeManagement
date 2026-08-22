@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Microsoft.Win32;
 using PcAgent.Core.Options;
+using PcAgent.Core.Ipc;
 using PcAgent;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -45,6 +46,13 @@ builder.Services.PostConfigure<AgentOptions>(options =>
         }
     }
 });
+
+using var singleInstance = new Mutex(true, @"Global\GamingCafeAgent", out var firstInstance);
+if (!firstInstance)
+{
+    Console.Error.WriteLine("GamingCafeAgent is already running — exit the other instance first.");
+    return;
+}
 
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<AgentOptions>>().Value);
 builder.Services.AddWindowsService(options => options.ServiceName = "GamingCafeAgent");

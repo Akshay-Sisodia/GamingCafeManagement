@@ -1,4 +1,6 @@
 using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 
@@ -40,14 +42,7 @@ public sealed class IpcServer
     {
         while (!ct.IsCancellationRequested)
         {
-            var server = new NamedPipeServerStream(
-                PipeName,
-                PipeDirection.InOut,
-                maxNumberOfServerInstances: 1,
-                PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous,
-                inBufferSize: 4096,
-                outBufferSize: 4096);
+            var server = CreateServerStream();
 
             try
             {
@@ -79,8 +74,11 @@ public sealed class IpcServer
 
                     if (ClientConnected is not null)
                     {
-                        try { await ClientConnected.Invoke(); }
-                        catch (Exception ex) { _log($"client-connected hook failed: {ex.Message}"); }
+                        _ = Task.Run(async () =>
+                        {
+                            try { await ClientConnected.Invoke(); }
+                            catch (Exception ex) { _log($"client-connected hook failed: {ex.Message}"); }
+                        });
                     }
 
                     while (!ct.IsCancellationRequested && server.IsConnected)
@@ -162,5 +160,34 @@ public sealed class IpcServer
         _cts.Cancel();
         _writeGate.Dispose();
         _cts.Dispose();
+    }
+
+  private static NamedPipeServerStream CreateServerStream()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return new NamedPipeServerStream(
+                PipeName,
+                PipeDirection.InOut,
+                maxNumberOfServerInstances: 1,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous);
+        }
+
+        // Service (LocalSystem) must accept connections from the kiosk user session.
+        var security = new PipeSecurity();
+        security.AddAccessRule(new PipeAccessRule(
+            new SecurityIdentifier(WellKnownSidType.WorldSid, null),
+            PipeAccessRights.ReadWrite,
+            AccessControlType.Allow));
+        return NamedPipeServerStreamAcl.Create(
+            PipeName,
+            PipeDirection.InOut,
+            maxNumberOfServerInstances: 1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous,
+            inBufferSize: 4096,
+            outBufferSize: 4096,
+            security);
     }
 }

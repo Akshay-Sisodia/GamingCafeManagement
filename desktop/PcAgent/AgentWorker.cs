@@ -52,13 +52,15 @@ public sealed class AgentWorker : BackgroundService
     private CancellationTokenSource _lifetime = new();
     private GameLibraryService? _gameLibrary;
     private List<LauncherGameDto> _launcherGames = new();
-    private readonly string _ipcToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+    private readonly string _ipcToken;
     private readonly object _launcherGamesGate = new();
 
     public AgentWorker(AgentOptions options, ILogger<AgentWorker> logger)
     {
         _options = options;
         _logger = logger;
+        Directory.CreateDirectory(options.DataDirectory);
+        _ipcToken = IpcTokenStore.LoadOrCreate(options.DataDirectory);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -810,12 +812,12 @@ public sealed class AgentWorker : BackgroundService
             }
         }, msg => _logger.LogInformation("ipc: {Msg}", msg));
 
-        // When the launcher connects, immediately hand it full state — it
-        // shouldn't wait a second for the next timer tick to know anything.
+        // When the launcher connects, push cached state — don't re-read games.local.json
+        // on every reconnect (supervisor restarts / pipe blips spam the log otherwise).
         _ipc.ClientConnected += async () =>
         {
             _timerPushLogged = false;
-            ReloadLocalGames();
+            await PushGamesToLauncherAsync();
             await PushSessionStateToLauncherAsync();
         };
 

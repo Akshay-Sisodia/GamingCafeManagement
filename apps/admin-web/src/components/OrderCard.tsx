@@ -30,13 +30,13 @@ interface OrderCardProps {
 export function OrderCard({ order, pcName, now, busy, onAction }: OrderCardProps) {
   const mins = minutesSince(order.placed_at, now);
   const timeTone =
-    mins > 20 ? "text-red-600" : mins > 10 ? "text-amber-600" : "text-zinc-500";
+    mins > 20 ? "text-red-400" : mins > 10 ? "text-amber-400" : "text-zinc-400";
   const action = nextAction(order.status);
 
   return (
-    <div className="rounded-2xl border-2 border-zinc-200 bg-white p-4 shadow-sm">
+    <div className="rounded-2xl border border-zinc-700 bg-zinc-900 p-4 shadow-lg shadow-black/20">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-3xl font-extrabold tracking-tight text-zinc-900">
+        <span className="text-3xl font-extrabold tracking-tight text-zinc-50">
           #{order.number}
         </span>
         <span className={`flex items-center gap-1.5 text-xl font-bold ${timeTone}`}>
@@ -44,11 +44,11 @@ export function OrderCard({ order, pcName, now, busy, onAction }: OrderCardProps
           {mins}m
         </span>
       </div>
-      <div className="mt-1 flex items-center gap-1.5 text-base font-medium text-zinc-500">
+      <div className="mt-1 flex items-center gap-1.5 text-base font-medium text-zinc-400">
         <Monitor className="h-4 w-4" />
         {pcName ?? (order.pc_id ? `PC ${order.pc_id.slice(0, 8)}` : "Front counter")}
       </div>
-      <ul className="mt-3 space-y-1.5 border-t border-zinc-100 pt-3 text-xl font-medium text-zinc-800">
+      <ul className="mt-3 space-y-1.5 border-t border-zinc-800 pt-3 text-xl font-medium text-zinc-200">
         {order.items.map((line, index) => (
           <li key={`${order.id}-${index}`}>
             {line.qty} × {line.name_snapshot}
@@ -60,7 +60,7 @@ export function OrderCard({ order, pcName, now, busy, onAction }: OrderCardProps
           type="button"
           disabled={busy}
           onClick={() => onAction(order.id, action.action)}
-          className="mt-4 min-h-16 w-full rounded-xl bg-zinc-900 text-xl font-bold text-white hover:bg-zinc-700 active:scale-[0.99] disabled:opacity-50"
+          className="mt-4 min-h-16 w-full rounded-xl bg-emerald-600 text-xl font-bold text-white hover:bg-emerald-500 active:scale-[0.99] disabled:opacity-50"
         >
           {action.label}
         </button>

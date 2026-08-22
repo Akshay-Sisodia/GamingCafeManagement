@@ -40,15 +40,18 @@ public sealed class MainViewModel : ObservableObject
         _ipc.PushReceived += OnPush;
         _ipc.ConnectionChanged += connected =>
         {
-            AgentConnected = connected;
-            AgentStatusText = connected
-                ? "Connected — session sync active"
-                : "Agent offline — demo games only, orders may fail";
-            if (!connected)
+            if (connected)
             {
-                SessionAlertText = "";
-                Games.Items.Clear();
+                AgentConnected = true;
+                AgentStatusText = "Connected — syncing…";
+                _ = BootstrapAsync();
+                return;
             }
+
+            AgentConnected = false;
+            AgentStatusText = "Agent offline — demo games only, orders may fail";
+            SessionAlertText = "";
+            Games.Items.Clear();
         };
 
         Games.LaunchRequested += async game =>
@@ -474,40 +477,65 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task BootstrapAsync()
     {
-        // Wait briefly for IPC; fall back to sample data so the UI is demoable standalone.
-        for (var i = 0; i < 10 && !_ipc.IsConnected; i++)
+        // Wait for IPC (agent may start after launcher, or pipe may need a moment).
+        for (var i = 0; i < 60 && !_ipc.IsConnected; i++)
         {
             await Task.Delay(500);
+        }
+
+        if (!_ipc.IsConnected)
+        {
+            AgentConnected = false;
+            AgentStatusText = "Agent offline — showing demo library";
+            SimpleFileLogger.Info("agent unreachable — using sample data");
+            LoadDemoGames();
+            return;
         }
 
         var bootstrap = await _ipc.SendRequestAsync(IpcProtocol.MethodBootstrap, null);
         if (bootstrap is null)
         {
-            if (_ipc.IsConnected)
-            {
-                AgentConnected = true;
-                AgentStatusText = "Connected — syncing session…";
-                SimpleFileLogger.Info("bootstrap pending — agent connected, retrying");
-                _ = RetryBootstrapAsync();
-                return;
-            }
+            AgentConnected = true;
+            AgentStatusText = "Connected — syncing session…";
+            SimpleFileLogger.Info("bootstrap pending — agent connected, retrying");
+            _ = RetryBootstrapAsync();
+            return;
+        }
 
-            AgentConnected = false;
-            AgentStatusText = "Agent offline — showing demo library";
-            SimpleFileLogger.Info("agent unreachable — using sample data");
-            Games.ReplaceAll(new List<GameTileVm>
-            {
-                new("g1", "CS2", "C:\\Games\\cs2.exe", "", GameCoverLoader.DemoCoverUrl("cs2"), "FPS"),
-                new("g2", "VALORANT", "C:\\Riot\\VALORANT.exe", "", GameCoverLoader.DemoCoverUrl("valorant"), "FPS"),
-                new("g3", "GTA V", "C:\\Games\\GTA5.exe", "", GameCoverLoader.DemoCoverUrl("gtav"), "Open World"),
-                new("g4", "FIFA 24", "C:\\Games\\FIFA24.exe", "", GameCoverLoader.DemoCoverUrl("fifa24"), "Sports"),
-                new("g5", "FORTNITE", "C:\\Games\\Fortnite.exe", "", GameCoverLoader.DemoCoverUrl("fortnite"), "Battle Royale"),
-                new("g6", "APEX", "C:\\Games\\Apex.exe", "", GameCoverLoader.DemoCoverUrl("apex"), "Battle Royale"),
-            });
+        if (IsIpcError(bootstrap.Value, out var ipcError))
+        {
+            AgentConnected = true;
+            AgentStatusText = $"Agent auth error — {ipcError}";
+            SimpleFileLogger.Info($"bootstrap ipc error: {ipcError}");
             return;
         }
 
         ApplyBootstrap(bootstrap.Value);
+    }
+
+    private static bool IsIpcError(JsonElement data, out string message)
+    {
+        if (data.TryGetProperty("ok", out var okEl) &&
+            okEl.ValueKind == JsonValueKind.False)
+        {
+            message = data.TryGetProperty("error", out var errEl) ? errEl.GetString() ?? "request failed" : "request failed";
+            return true;
+        }
+        message = "";
+        return false;
+    }
+
+    private void LoadDemoGames()
+    {
+        Games.ReplaceAll(new List<GameTileVm>
+        {
+            new("g1", "CS2", "C:\\Games\\cs2.exe", "", GameCoverLoader.DemoCoverUrl("cs2"), "FPS"),
+            new("g2", "VALORANT", "C:\\Riot\\VALORANT.exe", "", GameCoverLoader.DemoCoverUrl("valorant"), "FPS"),
+            new("g3", "GTA V", "C:\\Games\\GTA5.exe", "", GameCoverLoader.DemoCoverUrl("gtav"), "Open World"),
+            new("g4", "FIFA 24", "C:\\Games\\FIFA24.exe", "", GameCoverLoader.DemoCoverUrl("fifa24"), "Sports"),
+            new("g5", "FORTNITE", "C:\\Games\\Fortnite.exe", "", GameCoverLoader.DemoCoverUrl("fortnite"), "Battle Royale"),
+            new("g6", "APEX", "C:\\Games\\Apex.exe", "", GameCoverLoader.DemoCoverUrl("apex"), "Battle Royale"),
+        });
     }
 
     private static List<GameTileVm> ParseGameTiles(JsonElement data)

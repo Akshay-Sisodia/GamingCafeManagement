@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using PcAgent.Core.Ipc;
 
 namespace GamingLauncher.Ipc;
 
@@ -49,7 +50,6 @@ public sealed class NamedPipeIpcClient : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Channel<PendingRequest> _requests = Channel.CreateUnbounded<PendingRequest>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = false });
-    private readonly string? _ipcToken = Environment.GetEnvironmentVariable("GAMINGCAFE_IPC_TOKEN");
 
     private volatile int _connected;
 
@@ -81,19 +81,27 @@ public sealed class NamedPipeIpcClient : IDisposable
 
     private object? WithIpcToken(object? payload)
     {
-        if (string.IsNullOrWhiteSpace(_ipcToken)) return payload;
-        if (payload is null) return new { ipc_token = _ipcToken };
+        var ipcToken = ResolveIpcToken();
+        if (string.IsNullOrWhiteSpace(ipcToken)) return payload;
+        if (payload is null) return new { ipc_token = ipcToken };
         if (payload is JsonElement el && el.ValueKind == JsonValueKind.Object)
         {
             var dict = el.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone());
-            dict["ipc_token"] = _ipcToken;
+            dict["ipc_token"] = ipcToken;
             return dict;
         }
         var json = JsonSerializer.Serialize(payload);
         using var doc = JsonDocument.Parse(json);
         var map = doc.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone());
-        map["ipc_token"] = _ipcToken;
+        map["ipc_token"] = ipcToken;
         return map;
+    }
+
+    private static string? ResolveIpcToken()
+    {
+        var env = Environment.GetEnvironmentVariable("GAMINGCAFE_IPC_TOKEN");
+        if (!string.IsNullOrWhiteSpace(env)) return env;
+        return IpcTokenStore.TryLoad();
     }
 
     private async Task ConnectLoopAsync(CancellationToken ct)

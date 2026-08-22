@@ -4,9 +4,9 @@ import { KitchenHeader } from "./kitchen/KitchenHeader";
 import { useKitchenPage } from "./kitchen/useKitchenPage";
 
 const COLUMNS = [
-  { key: "new", title: "NEW", statuses: ["placed"], accent: "bg-sky-600" },
+  { key: "new", title: "NEW", statuses: ["placed"], accent: "bg-sky-500" },
   { key: "preparing", title: "PREPARING", statuses: ["accepted", "preparing"], accent: "bg-amber-500" },
-  { key: "ready", title: "READY", statuses: ["ready"], accent: "bg-emerald-600" },
+  { key: "ready", title: "READY", statuses: ["ready"], accent: "bg-emerald-500" },
 ] as const;
 
 /**
@@ -17,7 +17,7 @@ export function KitchenPage() {
   const kitchen = useKitchenPage();
 
   return (
-    <div className="min-h-screen bg-zinc-100">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <KitchenHeader connected={kitchen.connected} />
       {kitchen.errorMessage ? (
         <KitchenErrorBanner message={kitchen.errorMessage} onRetry={kitchen.onRetry} />

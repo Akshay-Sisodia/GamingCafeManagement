@@ -48,7 +48,7 @@ public sealed class LauncherSupervisor : IDisposable
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = _launcherPath,
-                    UseShellExecute = true,
+                    UseShellExecute = false,
                 };
                 if (!string.IsNullOrWhiteSpace(_ipcToken))
                 {

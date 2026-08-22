@@ -1,0 +1,22 @@
+﻿{
+    "Timestamp":  "2026-08-22 11:42:02",
+    "Machine":  "DESKTOP-B2P1QBE",
+    "Cores":  12,
+    "DurationSec":  120,
+    "AgentPid":  8852,
+    "LauncherPids":  "",
+    "Agent_CPU_Avg_Pct":  0.025,
+    "Agent_WS_MB_Start":  59.2,
+    "Agent_WS_MB_End":  60,
+    "Agent_Priv_MB_End":  17.2,
+    "Agent_WS_MB_Max":  60.6,
+    "Launcher_WS_MB_Start":  0,
+    "Launcher_WS_MB_End":  0,
+    "Launcher_Priv_MB_End":  0,
+    "Launcher_WS_MB_Max":  null,
+    "Launcher_Count":  0,
+    "Pass_Agent_CPU":  true,
+    "Pass_Agent_RAM_Target":  false,
+    "Pass_Agent_RAM_Hard":  true,
+    "Pass_Launcher_Idle_RAM":  true
+}
